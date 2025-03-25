@@ -1,0 +1,222 @@
+name: culttokens-monad-testnet
+resource_size: s
+apiVersion: 3
+sources:
+  source_1:
+    type: subgraph_entity
+    name: airdrop_contract_initialized
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_2:
+    type: subgraph_entity
+    name: approval
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_3:
+    type: subgraph_entity
+    name: cult_market_graduated
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_4:
+    type: subgraph_entity
+    name: cult_token_buy
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_5:
+    type: subgraph_entity
+    name: cult_token_created
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_6:
+    type: subgraph_entity
+    name: cult_token_fee
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_7:
+    type: subgraph_entity
+    name: cult_token_secondary_reward
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_8:
+    type: subgraph_entity
+    name: cult_token_sell
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_9:
+    type: subgraph_entity
+    name: cult_token_transfer
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_10:
+    type: subgraph_entity
+    name: deposit
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_11:
+    type: subgraph_entity
+    name: merkle_root_set
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_12:
+    type: subgraph_entity
+    name: ownership_transferred
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_13:
+    type: subgraph_entity
+    name: tokens_claimed
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_14:
+    type: subgraph_entity
+    name: transfer
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_15:
+    type: subgraph_entity
+    name: upgraded
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_16:
+    type: subgraph_entity
+    name: withdraw
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_17:
+    type: subgraph_entity
+    name: eip712_domain_changed
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+  source_18:
+    type: subgraph_entity
+    name: initialized
+    subgraphs:
+      - name: culttokens-monad-testnet
+        version: v1
+transforms: {}
+sinks:
+  sink_1:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_1
+    table: airdrop_contract_initialized
+    schema: monad-testnet
+  sink_2:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_2
+    table: approval
+    schema: monad-testnet
+  sink_3:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_3
+    table: cult_market_graduated
+    schema: monad-testnet
+  sink_4:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_4
+    table: cult_token_buy
+    schema: monad-testnet
+  sink_5:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_5
+    table: cult_token_created
+    schema: monad-testnet
+  sink_6:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_6
+    table: cult_token_fee
+    schema: monad-testnet
+  sink_7:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_7
+    table: cult_token_secondary_reward
+    schema: monad-testnet
+  sink_8:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_8
+    table: cult_token_sell
+    schema: monad-testnet
+  sink_9:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_9
+    table: cult_token_transfer
+    schema: monad-testnet
+  sink_10:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_10
+    table: deposit
+    schema: monad-testnet
+  sink_11:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_11
+    table: merkle_root_set
+    schema: monad-testnet
+  sink_14:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_12
+    table: ownership_transferred
+    schema: monad-testnet
+  sink_12:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_13
+    table: tokens_claimed
+    schema: monad-testnet
+  sink_13:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_14
+    table: transfer
+    schema: monad-testnet
+  sink_18:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_15
+    table: upgraded
+    schema: monad-testnet
+  sink_15:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_16
+    table: withdraw
+    schema: monad-testnet
+  sink_17:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_17
+    table: eip712_domain_changed
+    schema: monad-testnet
+  sink_16:
+    type: postgres
+    secret_name: POSTGRES_SECRET_CM8EU1AMX0
+    from: source_18
+    table: initialized
+    schema: monad-testnet

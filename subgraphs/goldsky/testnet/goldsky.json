@@ -1,0 +1,37 @@
+{
+    "version": "1",
+    "name": "culttokens",
+    "abis": {   
+        "airdropContract": { "path": "../../../constants/abis/AirdropContract.json" },
+        "cultContract": { "path": "../../../constants/abis/Cult.json" },
+        "cultFactoryContract": { "path": "../../../constants/abis/CultFactory.json" },
+        "cultRewardsContract": { "path": "../../../constants/abis/CultRewards.json" }
+    },
+    "chains": ["monad-testnet"],
+    "instances": [
+        {
+            "abi": "airdropContract",
+            "address": "0x407685f18b518d37A94F431741e4E8CdCbf16909",
+            "chain": "monad-testnet",
+            "startBlock": 7481125
+        },
+        {
+            "abi": "cultContract",
+            "address": "0x136C67fAF6B0291Efffc2858d9C7d93f57929E26",
+            "chain": "monad-testnet",
+            "startBlock": 7481125
+        },
+        {
+            "abi": "cultFactoryContract",
+            "address": "0x72c06FFD9015aCd5314C4f550DcA15a2055be9c4",
+            "chain": "monad-testnet",
+            "startBlock": 7481125
+        },
+        {
+            "abi": "cultRewardsContract",
+            "address": "0x96b889782F9E61eA0290296048a2AC2efaD02Ff2",
+            "chain": "monad-testnet",
+            "startBlock": 7481125
+        }
+    ]
+}
