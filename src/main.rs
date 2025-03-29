@@ -1,14 +1,14 @@
 use actix_web::{
     web, App, HttpResponse, HttpServer, Responder, 
-    HttpRequest, middleware::{Logger, NormalizePath}, 
+    middleware::{Logger, NormalizePath}, 
     guard, dev::ServiceRequest, error::ErrorUnauthorized
 };
-use actix_service::Service;
-use futures::future::{ok, Either};
+
+// use futures::future::{ok, Either};
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use dotenv::dotenv;
 use std::{env, sync::Arc, time::Duration};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize};
 use anyhow::Result;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -25,6 +25,7 @@ mod handlers;
 mod errors;
 mod websocket;
 use websocket::websocket_handler;
+use routes::app_routes;
 
 // Configuration struct for webhook settings
 #[derive(Clone)]
@@ -220,7 +221,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Clone the sender for the webhook handler
         let webhook_event_sender = event_sender.clone();
     
-
     // Start HTTP server
     HttpServer::new(move || {
         App::new()
@@ -239,6 +239,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )            .service(
                 web::resource("/ws").route(web::get().to(websocket_handler))
             )
+        .service(app_routes(web::Data::new(pool.clone())))
     })
     .bind(server_address)?
     .workers(4)  // Adjust based on CPU cores

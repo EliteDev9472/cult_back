@@ -32,11 +32,4 @@ hex = "0.4"
 bytes = "1.5"
 rand = "0.9.0"
 ordered-float = "5.0.0"
-
-[[bin]]
-name = "community_airdrops"
-path = "communityAirdrops/main.rs"
-
-[[bin]]
-name = "diamond_hands"
-path = "diamondHands/main.rs"
+graphql_client = "0.13"
