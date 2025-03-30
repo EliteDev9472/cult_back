@@ -11,7 +11,7 @@ actix-web-actors = "4.2.0"
 actix = "0.13.1" 
 serde = { version = "1.0.193", features = ["derive"] } 
 serde_json = "1.0"
-sqlx = { version = "0.8.3", features = ["runtime-tokio-native-tls", "postgres", "chrono"] } 
+sqlx = { version = "0.8.3", features = ["runtime-tokio-native-tls", "postgres", "chrono","runtime-tokio", "macros","bigdecimal"] } 
 tokio = { version = "1.32.0", features = ["full","rt-multi-thread"] } 
 tokio-postgres = "0.7"
 env_logger = "0.11.7" 
@@ -32,11 +32,5 @@ hex = "0.4"
 bytes = "1.5"
 rand = "0.9.0"
 ordered-float = "5.0.0"
-
-[[bin]]
-name = "community_airdrops"
-path = "communityAirdrops/main.rs"
-
-[[bin]]
-name = "diamond_hands"
-path = "diamondHands/main.rs"
+graphql_client = "0.13"
+bigdecimal = { version = "0.4", features = ["serde"] }
