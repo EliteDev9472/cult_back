@@ -4,7 +4,7 @@ use sqlx::{PgPool, QueryBuilder};
 use chrono::prelude::*;
 use serde_json::Value;
 use anyhow::Result;
-use crate::Community;
+use super::community_airdrops::Community;
 use std::env;
 use sqlx::postgres::Postgres;
 use rand::Rng;
@@ -201,7 +201,7 @@ pub async fn generate_dummy_account_data<'a>(
     // Generate random data in memory
     let mut updates = Vec::with_capacity(addresses.len());
     for address in addresses {
-        let probability = rng.gen_range(0..=500)/10000;
+        let probability = rng.gen_range(0..=500);
         let fee_collected = rng.gen_range(0..1_000_000);
         
         let referrer_id = if addresses.len() > 1 && rng.gen_bool(0.5) {

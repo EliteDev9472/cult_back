@@ -3,7 +3,7 @@ use actix_web_actors::ws;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 use uuid::Uuid;
-use crate::WebhookPayload;
+use crate::models::WebhookPayload;
 use actix::{Actor, StreamHandler, AsyncContext, Handler, Message};
 
 // Define a custom message type for WebSocket text messages

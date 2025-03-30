@@ -8,32 +8,49 @@ CREATE TABLE cult_token (
     token_uri TEXT NOT NULL,
     name TEXT NOT NULL,
     symbol TEXT NOT NULL,
-    token_address TEXT NOT NULL,
     pool_address TEXT NOT NULL,
     block_number BIGINT NOT NULL,
     block_timestamp TIMESTAMPTZ NOT NULL,
     transaction_hash TEXT NOT NULL,
     holder_count BIGINT NOT NULL,
-    airdrop_contract TEXT NOT NULL
+    airdrop_contract TEXT NOT NULL,
+    ipfs_content TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    price NUMERIC NOT NULL,
+    market_cap NUMERIC NOT NULL,
+    circulating_supply NUMERIC NOT NULL,
+    total_fee NUMERIC NOT NULL,
+    volume NUMERIC NOT NULL
 );
 
--- TokenIPFSData Table
-CREATE TABLE token_ipfs_data (
-    id TEXT PRIMARY KEY, -- Changed to TEXT for concatenated hash and address
-    hash TEXT NOT NULL,
-    content TEXT NOT NULL,
-    token_id TEXT REFERENCES cult_token(id) ON DELETE CASCADE -- Changed to TEXT
+--TODO: New Table
+CREATE TABLE token_stats (
+    token_id TEXT PRIMARY KEY REFERENCES cult_token(id),
+    
+    mean_duration NUMERIC,
+    mean_volume NUMERIC,
+    mean_value NUMERIC,
+    mean_pnl NUMERIC,
+    
+    stddev_duration NUMERIC,
+    stddev_volume NUMERIC,
+    stddev_value NUMERIC,
+    stddev_pnl NUMERIC,
+
+    liquidity_score NUMERIC,
+    holder_weight NUMERIC
 );
+
 
 -- Account Table
 CREATE TABLE account (
-    id TEXT PRIMARY KEY, -- Changed to TEXT for address
+    id TEXT PRIMARY KEY, -- Storing address as text
     slug TEXT,
     referral_code TEXT,
-    diamond_hand_probability INT NOT NULL,
-    referrer_id TEXT REFERENCES account(id) ON DELETE SET NULL, -- Changed to TEXT
-    total_referrals INT,
-    fee_collected BIGINT NOT NULL,
+    diamond_hand_probability INT NOT NULL CHECK (diamond_hand_probability >= 0), -- Ensure non-negative
+    referrer_id TEXT REFERENCES account(id) ON DELETE SET NULL, -- Foreign key reference
+    total_referrals INT CHECK (total_referrals >= 0), -- Ensure non-negative
+    fee_collected NUMERIC NOT NULL, -- Store large U256 values safely
     twitter TEXT,
     discord TEXT
 );
@@ -47,7 +64,9 @@ CREATE TABLE diamond_hand_list (
 CREATE TABLE token_balance (
     account_id TEXT REFERENCES account(id),
     token_id TEXT REFERENCES cult_token(id),
-    holding_duration BIGINT NOT NULL,
+    first_bought TIMESTAMPTZ NOT NULL,
+    volume NUMERIC NOT NULL,
+    holding_duration BIGINT,
     pnl NUMERIC NOT NULL,
     holdings_value NUMERIC NOT NULL,
     duration_z NUMERIC,
@@ -56,39 +75,27 @@ CREATE TABLE token_balance (
     PRIMARY KEY (account_id, token_id)
 );
 
---TODO: New Table
-CREATE TABLE token_stats (
-    token_id TEXT PRIMARY KEY REFERENCES cult_token(id),
-    mean_duration NUMERIC,
-    stddev_duration NUMERIC,
-    mean_pnl NUMERIC,
-    stddev_pnl NUMERIC,
-    mean_value NUMERIC,
-    stddev_value NUMERIC,
-    liquidity_score NUMERIC,
-    holder_weight NUMERIC
-);
 
 -- TradeType Enum
 CREATE TYPE trade_type AS ENUM ('Buy', 'Sell');
 
 -- TokenTrade Table
 CREATE TABLE token_trade (
-    id TEXT PRIMARY KEY, -- Changed to TEXT for concatenated hash and address
     token_id TEXT REFERENCES cult_token(id) ON DELETE CASCADE, -- Changed to TEXT
     trade_type trade_type NOT NULL,
     trader_id TEXT REFERENCES account(id) ON DELETE CASCADE, -- Changed to TEXT
     recipient_id TEXT REFERENCES account(id) ON DELETE CASCADE, -- Changed to TEXT
     order_referrer_id TEXT REFERENCES account(id) ON DELETE CASCADE, -- Changed to TEXT
-    total_eth BIGINT NOT NULL,
-    eth_fee BIGINT NOT NULL,
-    eth_amount BIGINT NOT NULL,
-    token_amount BIGINT NOT NULL,
-    trader_token_balance BIGINT NOT NULL,
-    total_supply BIGINT NOT NULL,
+    total_eth NUMERIC NOT NULL,
+    eth_fee NUMERIC NOT NULL,
+    eth_amount NUMERIC NOT NULL,
+    token_amount NUMERIC NOT NULL,
+    trader_token_balance NUMERIC NOT NULL,
+    total_supply NUMERIC NOT NULL,
     market_type BIGINT NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL,
-    transaction_hash TEXT NOT NULL
+    transaction_hash TEXT NOT NULL,
+    PRIMARY KEY (transaction_hash, token_id)
 );
 
 -- NOT USING RN TO SEE IF COMPUTING ON THE FLY MIGHT BE BETTER
@@ -131,11 +138,22 @@ CREATE TABLE account_watchlist (
 );
 
 -- Indexes 
+-- Index for fetching communities a user is part of
 CREATE INDEX idx_account_communities_account ON account_communities(account_id);
 CREATE INDEX idx_account_communities_community ON account_communities(community_id);
 
 -- Index for retrieving trades by token more efficiently
 CREATE INDEX idx_token_trade_token_id ON token_trade (token_id);
+
+-- Index for fetching tokens created by a user
+CREATE INDEX idx_cult_token_creator ON cult_token (token_creator);
+
+-- Index for fetching tokens owned by a user
+CREATE INDEX idx_token_balance_account_id ON token_balance (account_id);
+
+-- Index for fetching tokens watchlisted by a user
+CREATE INDEX idx_account_watchlist_account_id ON account_watchlist (account_id);
+
 
 
 -- Materialized View for account_communities
