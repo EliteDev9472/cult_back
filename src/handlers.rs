@@ -1,3 +1,4 @@
+use alloy::signers::k256::elliptic_curve::pkcs8::der::asn1::Int;
 // use anyhow::Ok;
 // use chrono::{DateTime, TimeZone, Utc};
 // use serde_json::Value;
@@ -8,8 +9,9 @@ use sqlx::{Pool, Postgres};
 use actix_web::{web, HttpResponse};
 use sqlx::PgPool;
 use std::result::Result::Ok;
+use serde::{Deserialize, Serialize};
 
-use crate::models::{Account, CultToken, TokenBalance, TokenTradeRow};
+use crate::models::{Account, CultToken, TokenBalance, TokenTradeRow, PaginationParams, TopHolderParams};
 
 pub async fn handle_cult_token_created(
     event: CultTokenCreatedEvent,
@@ -93,10 +95,19 @@ pub struct CultTokenFeesEvent {
 }
 
 
-pub async fn get_cult_tokens(pool: web::Data<PgPool>) -> HttpResponse {
+
+pub async fn get_cult_tokens(
+    pool: web::Data<PgPool>, 
+    path: web::Path<PaginationParams>,
+)-> HttpResponse {
+    let PaginationParams { offset, limit } = path.into_inner();
+    
     let query = sqlx::query_as::<_, CultToken>(
-        "SELECT * FROM public.cult_token ORDER BY block_timestamp DESC"
-    );
+        "SELECT * FROM public.cult_token  ORDER BY block_timestamp DESC OFFSET $1 LIMIT $2;"
+    )
+    .bind(offset)
+    .bind(limit);
+
     match query.fetch_all(pool.get_ref()).await {
         Ok(tokens) => HttpResponse::Ok().json(tokens),
         Err(err) => {
@@ -108,7 +119,7 @@ pub async fn get_cult_tokens(pool: web::Data<PgPool>) -> HttpResponse {
 
 pub async fn get_top_coins(pool: web::Data<PgPool>) -> HttpResponse {
     let query = sqlx::query_as::<_, CultToken>(
-        "SELECT * FROM public.cult_token ORDER BY holder_count DESC LIMIT 10"
+        "SELECT * FROM public.cult_token ORDER BY holder_count DESC LIMIT 3"
     );
 
     match query.fetch_all(pool.get_ref()).await {
@@ -143,13 +154,17 @@ pub async fn get_token_data(
 
 pub async fn get_top_holders(
     pool: web::Data<PgPool>,
-    token_address: web::Path<String>,
+    path: web::Path<TopHolderParams>,
 ) -> HttpResponse {
-    println!("---------------->");
+    
+    let TopHolderParams { token_address, offset, limit } = path.into_inner();
+    
     let result = sqlx::query_as::<_, TokenBalance>(
-        "SELECT * FROM public.token_balance WHERE token_id = $1 ORDER BY value DESC LIMIT 100"
+        "SELECT  account_id, token_id, first_bought, volume::BIGINT, holding_duration, pnl::BIGINT, holdings_value::BIGINT, duration_z::BIGINT, pnl_z::BIGINT, value_z::BIGINT FROM public.token_balance WHERE token_id = $1  ORDER BY value_z DESC offset $2 limit $3"
     )
-    .bind(token_address.into_inner())
+    .bind(token_address)
+    .bind(offset)
+    .bind(limit)
     .fetch_all(pool.get_ref())
     .await;
 
@@ -164,12 +179,16 @@ pub async fn get_top_holders(
 
 pub async fn get_token_trades(
     pool: web::Data<PgPool>,
-    token_address: web::Path<String>,
+    path: web::Path<TopHolderParams>,
 ) -> HttpResponse {
+    let TopHolderParams { token_address, offset, limit } = path.into_inner();
+
     let result = sqlx::query_as::<_, TokenTradeRow>(
         "SELECT * FROM public.token_trade WHERE token_id = $1 ORDER BY timestamp DESC LIMIT 100"
     )
-    .bind(token_address.into_inner())
+    .bind(token_address)
+    .bind(offset)
+    .bind(limit)
     .fetch_all(pool.get_ref())
     .await;
 
@@ -186,8 +205,8 @@ pub async fn get_tokens_created(
     pool: web::Data<PgPool>,
     account_id: web::Path<String>,
 ) -> HttpResponse {
-    let result = sqlx::query_as::<_, CultToken>(
-        "SELECT * FROM public.cult_token WHERE token_creator = $1 ORDER BY block_timestamp DESC"
+    let result = sqlx::query_as::<_, Account>(
+        "SELECT id, slug,referral_code,diamond_hand_probability,referrer_id,total_referrals,fee_collected::BIGINT,twitter,discord FROM public.account WHERE id = $1"
     )
     .bind(account_id.into_inner())
     .fetch_all(pool.get_ref())
@@ -208,7 +227,7 @@ pub async fn get_account_details(
     account_id: web::Path<String>,
 ) -> HttpResponse {
     let result = sqlx::query_as::<_, Account>(
-        "SELECT * FROM accounts WHERE id = $1"
+        "SELECT id, slug,referral_code,diamond_hand_probability,referrer_id,total_referrals,fee_collected::BIGINT,twitter,discord FROM public.account WHERE id = $1"
     )
     .bind(account_id.into_inner())
     .fetch_optional(pool.get_ref())
