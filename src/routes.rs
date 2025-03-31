@@ -695,40 +695,39 @@ pub async fn get_account_details(
 
 
 
-pub async fn get_tokens_created(
-    pool: web::Data<PgPool>,
-    account_id: web::Path<String>,
-) -> HttpResponse {
+// pub async fn get_tokens_created(
+//     pool: web::Data<PgPool>,
+//     account_id: web::Path<String>,
+// ) -> HttpResponse {
+//     let result = sqlx::query_as!(
+//         TokenCreatedResponse,
+//         r#"
+//             SELECT
+//                 account.id,
+//                 slug,
+//                 diamond_hand_probability,
+//                 fee_collected as "feeCollected?",
+//                 total_referrals,
+//                 cult_token.id as "token_id?",
+//                 cult_token.name as "token_name?",
+//                 cult_token.symbol as "token_symbol?",
+//                 ipfs_content as "ipfs_content?",
+//                 value_z as "value?"
+//             FROM account 
+//             LEFT JOIN cult_token ON account.id = cult_token.token_creator
+//             LEFT JOIN token_balance ON account.id = token_balance.account_id
+//             WHERE account.id = $1
+//         "#,
+//         account_id.into_inner()
+//     )
+//     .fetch_all(pool.get_ref())
+//     .await;
 
-    let result = sqlx::query_as!(
-        TokenCreatedResponse,
-        r#"
-            SELECT
-                account.id,
-                slug,
-                diamond_hand_probability,
-                fee_collected as "feeCollected?",
-                total_referrals,
-                cult_token.id as "token_id?",
-                cult_token.name as "token_name?",
-                cult_token.symbol as "token_symbol?",
-                ipfs_content as "ipfs_content?",
-                value_z as "value?"
-            FROM account 
-            LEFT JOIN cult_token ON account.id = cult_token.token_creator
-            LEFT JOIN token_balance ON account.id = token_balance.account_id
-            WHERE account.id = $1
-        "#,
-        account_id.into_inner()
-    )
-    .fetch_all(pool.get_ref())
-    .await;
-
-    match result {
-        Ok(rows) => HttpResponse::Ok().json(rows),
-        Err(e) => {
-            eprintln!("Error fetching trades: {:?}", e);
-            HttpResponse::InternalServerError().body("DB error")
-        }
-    }
-}
+//     match result {
+//         Ok(rows) => HttpResponse::Ok().json(rows),
+//         Err(e) => {
+//             eprintln!("Error fetching trades: {:?}", e);
+//             HttpResponse::InternalServerError().body("DB error")
+//         }
+//     }
+// }

@@ -288,7 +288,7 @@ async fn main() -> std::io::Result<()> {
                     .service(web::resource("/cult_token/{token_address}").route(web::get().to(routes::get_token_data)))
                     .service(web::resource("/top_holders/{token_address}/{offset}/{limit}").route(web::get().to(routes::get_top_holders)))
                     .service(web::resource("/trades/{token_address}/{offset}/{limit}").route(web::get().to(routes::get_token_trades)))
-                    .service(web::resource("/tokens_created/{account_id}").route(web::get().to(routes::get_tokens_created)))
+                    // .service(web::resource("/tokens_created/{account_id}").route(web::get().to(routes::get_tokens_created)))
                     .service(web::resource("/account/{account_id}").route(web::get().to(routes::get_account_details)))
 
             )
