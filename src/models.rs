@@ -112,3 +112,35 @@ pub struct WebhookResponse {
     pub status: String,
     pub event_id: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TokenTradeRow {
+    pub token_id: String,
+    pub trade_type: TradeType,
+    pub trader_id: String,
+    pub recipient_id: String,
+    pub order_referrer_id: String,
+    pub total_eth: BigDecimal,
+    pub eth_fee: BigDecimal,
+    pub eth_amount: BigDecimal,
+    pub token_amount: BigDecimal,
+    pub trader_token_balance: BigDecimal,
+    pub total_supply: BigDecimal,
+    // pub market_type: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub transaction_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PaginationParams {
+    pub offset: i64,
+    pub limit: i64,
+}
+
+
+#[derive(Debug, Deserialize)]
+pub struct TopHolderParams {
+    pub token_address: String,
+    pub offset: i64,
+    pub limit: i64,
+}
