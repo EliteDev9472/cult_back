@@ -1723,6 +1723,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -2147,6 +2148,7 @@ dependencies = [
  "alloy 0.12.5",
  "alloy-merkle-tree",
  "anyhow",
+ "bigdecimal",
  "bytes",
  "chrono",
  "dotenv",

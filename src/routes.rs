@@ -4,8 +4,11 @@ use sqlx::{PgPool, postgres::Postgres};
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use crate::models::{CultToken, TokenTrade, Account};
-
+use crate::models::{CultToken, TokenTrade, Account, PaginationParams, TopHolderParams, CultTokensResponse, CultTokenTopHolders, CultTokensDataResponse, TokenTradesResponse, AccountDetailResponse};
+use sqlx::{Pool};
+use std::result::Result::Ok;
+use bigdecimal::BigDecimal;
+use std::str::FromStr;
 // // Get all tokens
 // pub async fn get_tokens(pool: web::Data<PgPool>) -> impl Responder {
 //     let result: Result<Vec<CultToken>, sqlx::Error> = sqlx::query_as!(
@@ -374,3 +377,286 @@ pub async fn get_all_communities(pool: web::Data<PgPool>) -> impl Responder {
         Err(e) => HttpResponse::InternalServerError().body(format!("Database error: {}", e)),
     }
 }
+
+pub async fn handle_cult_token_created(
+    event: CultTokenCreatedEvent,
+    pool: &Pool<Postgres>,
+) -> Result<(), anyhow::Error> {
+    Ok(())
+}
+
+pub async fn handle_cult_token_buy(
+    event: CultTokenBuyEvent,
+    pool: &Pool<Postgres>,
+) -> Result<(), anyhow::Error> {
+    Ok(())
+}
+#[derive(serde::Deserialize)]
+pub struct CultTokenCreatedEvent {
+    pub token_address: String,
+    pub token_creator: String,
+    pub airdrop_contract: String,
+    pub factory_address: String,
+    pub protocol_fee_recipient: String,
+    pub bonding_curve: String,
+    pub token_uri: String,
+    pub name: String,
+    pub symbol: String,
+    pub pool_address: String,
+    pub block_number: u64,
+    pub block_timestamp: u64,
+    pub block_hash: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CultTokenBuyEvent {
+    pub srcAddress:String,
+    pub buyer: String,
+    pub recipient: String,
+    pub order_referrer: String,
+    pub total_eth: i64,
+    pub eth_fee: i64,
+    pub eth_sold: i64,
+    pub tokens_bought: i64,
+    pub buyer_token_balance: i64,
+    pub total_supply: i64,
+    pub market_type: u8,
+    pub block_timestamp: u64,
+    pub block_hash: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CultTokenSellEvent {
+    pub seller: String,
+    pub recipient: String,
+    pub order_referrer: String,
+    pub total_eth: i64,
+    pub eth_fee: i64,
+    pub eth_bought: i64,
+    pub tokens_sold: i64,
+    pub seller_token_balance: i64,
+    pub total_supply: i64,
+    pub market_type: u8,
+    pub block_timestamp: u64,
+    pub block_hash: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CultTokenTransferEvent {
+    pub from: String,
+    pub to: String,
+    pub from_token_balance: i64,
+    pub to_token_balance: i64,
+    pub block_timestamp: u64,
+    pub block_hash: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CultTokenFeesEvent {
+    pub order_referrer: String,
+    pub order_referrer_fee: i64,
+    pub block_timestamp: u64,
+    pub block_hash: String,
+}
+
+
+pub async fn get_cult_tokens(pool: web::Data<PgPool>, path: web::Path<PaginationParams>) -> impl Responder {
+    let PaginationParams { offset, limit } = path.into_inner();
+
+    let result = sqlx::query!(
+        r#"
+        SELECT 
+            id,
+            token_creator,
+            name,
+            symbol,
+            ipfs_content
+        FROM cult_token
+        ORDER BY block_timestamp DESC
+        OFFSET $1 LIMIT $2
+        "#,
+        offset,
+        limit
+    )
+    .fetch_optional(pool.get_ref())
+    .await;
+
+    match result {
+        Ok(Some(row)) => {
+            let response = CultTokensResponse {
+                token_address: row.id,
+                token_creator: row.token_creator,
+                name: row.name,
+                symbol: row.symbol,
+                ipfsData: row.ipfs_content,
+            };
+
+            HttpResponse::Ok().json(response)
+        }
+        Ok(None) => HttpResponse::NotFound().body("Profile not found"),
+        Err(e) => HttpResponse::InternalServerError().body(format!("Database error: {}", e)),
+    }
+}
+
+pub async fn get_top_coins(pool: web::Data<PgPool>) -> impl Responder {
+
+    let result = sqlx::query!(
+        r#"
+        SELECT 
+            id,
+            token_creator,
+            name,
+            symbol,
+            ipfs_content
+        FROM cult_token ORDER BY holder_count DESC LIMIT 3
+        "#
+    )
+    .fetch_optional(pool.get_ref())
+    .await;
+
+
+    match result {
+        Ok(Some(row)) => {
+            let response = CultTokensResponse {
+                token_address: row.id,
+                token_creator: row.token_creator,
+                name: row.name,
+                symbol: row.symbol,
+                ipfsData: row.ipfs_content,
+            };
+
+            HttpResponse::Ok().json(response)
+        }
+        Ok(None) => HttpResponse::NotFound().body("Profile not found"),
+        Err(e) => HttpResponse::InternalServerError().body(format!("Database error: {}", e)),
+    }
+}
+
+
+pub async fn get_token_data(pool: web::Data<PgPool>, token_address: web::Path<String>) -> impl Responder {
+
+    let result = sqlx::query!(
+        r#"
+        SELECT 
+            id,
+            token_creator,
+            bonding_curve,
+            name,
+            symbol,
+            pool_address,
+            block_timestamp,
+            holder_count,
+            airdrop_contract,
+            ipfs_content
+        FROM cult_token WHERE id = $1
+        "#,
+        token_address.into_inner()
+    )
+    .fetch_optional(pool.get_ref())
+    .await;
+
+
+    match result {
+        Ok(Some(row)) => {
+            let result = CultTokensDataResponse {
+                id: row.id,
+                token_creator: row.token_creator,
+                bonding_curve: row.bonding_curve,
+                name: row.name,
+                symbol: row.symbol,
+                pool_address: row.pool_address,
+                block_timestamp: row.block_timestamp,
+                holder_count: row.holder_count,
+                airdrop_contract: row.airdrop_contract,
+                ipfs_content: row.ipfs_content,
+            };
+
+            HttpResponse::Ok().json(result)
+        }
+        Ok(None) => HttpResponse::NotFound().body("Profile not found"),
+        Err(e) => HttpResponse::InternalServerError().body(format!("Database error: {}", e)),
+    }
+}
+
+
+pub async fn get_top_holders(pool: web::Data<PgPool>, path: web::Path<TopHolderParams>) -> impl Responder {
+
+    let TopHolderParams { token_address, offset, limit } = path.into_inner();
+
+    let result = sqlx::query!(
+        r#"
+        SELECT 
+            account_id,
+            value_z
+        FROM token_balance WHERE token_id = $1
+        ORDER BY value_z DESC offset $2 limit $3
+        "#,
+        token_address,
+        offset,
+        limit
+    )
+    .fetch_optional(pool.get_ref())
+    .await;
+
+
+    match result {
+        Ok(rows) => {
+            let holders: Vec<CultTokenTopHolders> = rows
+                .into_iter()
+                .map(|row| CultTokenTopHolders {
+                    id: row.account_id,
+                    value: row.value_z.unwrap_or_else(|| BigDecimal::from_str("0").unwrap()),
+                })
+                .collect();
+
+            HttpResponse::Ok().json(holders)
+        }
+        Ok(None) => HttpResponse::NotFound().body("Profile not found"),
+        Err(e) => HttpResponse::InternalServerError().body(format!("Database error: {}", e)),
+    }
+}
+
+
+
+pub async fn get_token_trades(
+    pool: web::Data<sqlx::PgPool>,
+    path: web::Path<TopHolderParams>,
+) -> impl Responder {
+    let TopHolderParams { token_address, offset, limit } = path.into_inner();
+
+    let result = sqlx::query_as!(
+        TokenTradesResponse,
+        r#"
+        SELECT 
+            token_id as id,
+            trader_id as trader,
+            recipient_id as recipient,
+            order_referrer_id as "orderReferrer",
+            eth_amount as "ethAmount?",
+            token_amount as "tokenAmount?",
+            trader_token_balance as "traderTokenBalance?",
+            market_type as "marketType",
+            timestamp,
+            transaction_hash as "transactionHash"
+        FROM token_trade 
+        WHERE token_id = $1
+        ORDER BY timestamp DESC 
+        OFFSET $2 LIMIT $3
+        "#,
+        token_address,
+        offset,
+        limit
+    )
+    .fetch_all(pool.get_ref())
+    .await;
+
+    match result {
+        Ok(rows) => HttpResponse::Ok().json(rows),
+        Err(e) => {
+            eprintln!("Error fetching trades: {:?}", e);
+            HttpResponse::InternalServerError().body("DB error")
+        }
+    }
+}
+
+
