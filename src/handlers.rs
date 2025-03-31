@@ -4,7 +4,7 @@ use serde_json::Value;
 use sqlx::{Transaction, Postgres, Executor}; 
 use reqwest;
 use chrono::{DateTime, TimeZone, Utc}; // For handling timestamps
-use crate::models::{ Account, CultToken, TokenBalance, TokenTrade, TradeType };
+use crate::models::{ Account, CultToken, TokenBalance, TokenTrade };
 use sqlx::types::BigDecimal;
 use std::str::FromStr;                  // for parsing string -> BigDecimal
 use serde::Deserialize;

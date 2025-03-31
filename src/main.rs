@@ -36,6 +36,8 @@ use diamond_hands::diamond_hands::{
     get_eligible_accounts, select_weighted_sample, update_diamond_hands, SAMPLE_SIZE,
 };
 use websocket::websocket_handler;
+use bigdecimal::BigDecimal;
+use std::str::FromStr;
 
 // Advanced authentication middleware
 // async fn webhook_authenticator(
@@ -282,11 +284,11 @@ async fn main() -> std::io::Result<()> {
                     .service(web::resource("/diamond_hands").route(web::get().to(routes::get_diamond_hands)))
                     .service(web::resource("/communities").route(web::get().to(routes::get_all_communities)))
                     .service(web::resource("/cult_tokens/{offset}/{limit}").route(web::get().to(routes::get_cult_tokens)))
-                    .service(web::resource("/top_coins").route(web::get().to(get_top_coins)))
+                    .service(web::resource("/top_coins").route(web::get().to(routes::get_top_coins)))
                     .service(web::resource("/cult_token/{token_address}").route(web::get().to(routes::get_token_data)))
                     .service(web::resource("/top_holders/{token_address}/{offset}/{limit}").route(web::get().to(routes::get_top_holders)))
                     .service(web::resource("/trades/{token_address}/{offset}/{limit}").route(web::get().to(routes::get_token_trades)))
-                    .service(web::resource("/tokens_created/{account_id}").route(web::get().to(groutes::et_tokens_created)))
+                    .service(web::resource("/tokens_created/{account_id}").route(web::get().to(routes::get_tokens_created)))
                     .service(web::resource("/account/{account_id}").route(web::get().to(routes::get_account_details)))
 
             )

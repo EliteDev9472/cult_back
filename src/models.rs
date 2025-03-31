@@ -2,10 +2,13 @@ use alloy::primitives::U256;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
-use uuid::Uuid;
+use bigdecimal::BigDecimal;
+use std::str::FromStr;
+use sqlx::Type;
+
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct CultToken {
-    pub id: Option<String>, // Changed to String for address
+    pub id: String, // Changed to String for address
     pub factory_address: String,
     pub token_creator: String,
     pub protocol_fee_recipient: String,
@@ -14,20 +17,18 @@ pub struct CultToken {
     pub name: String,
     pub symbol: String,
     pub pool_address: String,
-    pub block_number: i64,
+    pub block_number: U256,
     pub block_timestamp: DateTime<Utc>,
     pub transaction_hash: String,
-    pub holder_count: u32,
+    pub holder_count: U256,
     pub airdrop_contract: String,
-    pub trades: Option<Vec<TokenTrade>>,
-    pub balances: Option<Vec<TokenBalance>>,
     pub ipfs_content: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum TradeType {
-    Buy,
-    Sell,
+    pub chain: String,
+    pub price: U256,
+    pub market_cap: U256,
+    pub circulating_supply: U256,
+    pub total_fee: U256,
+    pub volume: U256
 }
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
@@ -58,7 +59,7 @@ pub struct TokenBalance {
 pub struct TokenTrade {
     pub id: Option<String>, // Changed to String for concatenated hash and address
     pub token_id: String, // Reference to CultToken (foreign key)
-    pub trade_type: TradeType,
+    pub trade_type: String,
     pub trader_id: String, // Reference to Account (foreign key)
     pub recipient_id: String, // Reference to Account (foreign key)
     pub order_referrer_id: String, // Reference to Account (foreign key)
@@ -113,24 +114,6 @@ pub struct WebhookResponse {
     pub event_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
-pub struct TokenTradeRow {
-    pub token_id: String,
-    pub trade_type: TradeType,
-    pub trader_id: String,
-    pub recipient_id: String,
-    pub order_referrer_id: String,
-    pub total_eth: BigDecimal,
-    pub eth_fee: BigDecimal,
-    pub eth_amount: BigDecimal,
-    pub token_amount: BigDecimal,
-    pub trader_token_balance: BigDecimal,
-    pub total_supply: BigDecimal,
-    // pub market_type: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub transaction_hash: String,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct PaginationParams {
     pub offset: i64,
@@ -143,4 +126,83 @@ pub struct TopHolderParams {
     pub token_address: String,
     pub offset: i64,
     pub limit: i64,
+}
+
+//////// new response structs
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CultTokensResponse {
+    pub token_address: String,
+    pub token_creator: String,
+    pub name: String,
+    pub symbol: String,
+    pub ipfsData: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CultTokenTopHolders {
+    pub value: BigDecimal,
+    pub id: String
+}
+
+
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CultTokensDataResponse {
+    pub id: String,
+    pub token_creator: String,
+    pub bonding_curve: String,
+    pub name: String,
+    pub symbol: String,
+    pub pool_address: String,
+    pub block_timestamp: DateTime<Utc>,
+    pub holder_count: i64,
+    pub airdrop_contract: String,
+    pub ipfs_content: String,
+}
+
+
+#[derive(Debug, Deserialize, Serialize, Type)]
+#[sqlx(type_name = "trade_type", rename_all = "PascalCase")] // match PostgreSQL enum name and case style
+pub enum TradeType {
+    Buy,
+    Sell,
+}
+
+#[derive(Debug, Deserialize, Serialize, FromRow)]
+pub struct TokenTradesResponse {
+    pub id: String,
+    pub trader: Option<String>,
+    pub recipient: Option<String>,
+    pub orderReferrer: Option<String>,
+    pub ethAmount: Option<BigDecimal>,
+    pub tokenAmount: Option<BigDecimal>,
+    pub traderTokenBalance: Option<BigDecimal>,
+    pub marketType: i64,
+    pub timestamp: DateTime<Utc>,
+    pub transactionHash: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AccountDetailResponse {
+    pub id: String,
+    pub slug: Option<String>,
+    pub diamond_hand_probability: Option<i32>, // ✅ changed
+    pub total_referrals: Option<i32>,          // ✅ changed
+    pub feeCollected: Option<BigDecimal>,
+}
+
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct TokenCreatedResponse {
+    pub id: String,
+    pub slug: Option<String>,                      
+    pub diamond_hand_probability: Option<i32>,
+    pub total_referrals: Option<i32>,
+    pub feeCollected: Option<BigDecimal>,
+    pub token_id: Option<String>,                 
+    pub token_name: Option<String>,              
+    pub token_symbol: Option<String>,            
+    pub ipfs_content: Option<String>,            
+    pub value: Option<BigDecimal>,
 }
