@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 use uuid::Uuid;
+use bigdecimal::BigDecimal;
+use std::str::FromStr;
+use sqlx::Type;
+
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct CultToken {
     pub id: Option<String>, // Changed to String for address
@@ -112,3 +116,76 @@ pub struct WebhookResponse {
     pub status: String,
     pub event_id: String,
 }
+
+
+
+//////// new response & params structs
+#[derive(Debug, Deserialize)]
+pub struct PaginationParams {
+    pub offset: i64,
+    pub limit: i64,
+}
+
+
+#[derive(Debug, Deserialize)]
+pub struct TopHolderParams {
+    pub token_address: String,
+    pub offset: i64,
+    pub limit: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CultTokensResponse {
+    pub token_address: String,
+    pub token_creator: String,
+    pub name: String,
+    pub symbol: String,
+    pub ipfsData: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CultTokenTopHolders {
+    pub value: BigDecimal,
+    pub id: String
+}
+
+
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CultTokensDataResponse {
+    pub id: String,
+    pub token_creator: String,
+    pub bonding_curve: String,
+    pub name: String,
+    pub symbol: String,
+    pub pool_address: String,
+    pub block_timestamp: DateTime<Utc>,
+    pub holder_count: i64,
+    pub airdrop_contract: String,
+    pub ipfs_content: String,
+}
+
+
+#[derive(Debug, Deserialize, Serialize, FromRow)]
+pub struct TokenTradesResponse {
+    pub id: String,
+    pub trader: Option<String>,
+    pub recipient: Option<String>,
+    pub orderReferrer: Option<String>,
+    pub ethAmount: Option<BigDecimal>,
+    pub tokenAmount: Option<BigDecimal>,
+    pub traderTokenBalance: Option<BigDecimal>,
+    pub marketType: i64,
+    pub timestamp: DateTime<Utc>,
+    pub transactionHash: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AccountDetailResponse {
+    pub id: String,
+    pub slug: Option<String>,
+    pub diamond_hand_probability: Option<i32>, // ✅ changed
+    pub total_referrals: Option<i32>,          // ✅ changed
+    pub feeCollected: Option<BigDecimal>,
+}
+
