@@ -1,0 +1,6 @@
+-- Add airdropped_communities (assuming it's a comma-separated list of addresses)
+-- CREATE TABLE cult_token_communities (
+--     cult_token_id TEXT REFERENCES cult_token(id),
+--     community_id TEXT REFERENCES communities(id),
+--     PRIMARY KEY (cult_token_id, community_id)
+-- );

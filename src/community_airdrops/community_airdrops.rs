@@ -13,10 +13,11 @@ use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 use serde_json::from_reader;
 use sqlx::PgPool;
-mod handler;
+use crate::community_airdrops::handler;
 use sqlx::FromRow;
 use std::time::{Instant}; //to measure time for certain operations
-
+//use cult_backend::auth::middleware::ApiGuard;
+//use cult_backend::config::Settings;
 
 #[derive(Debug, FromRow)] 
 pub struct Community {
@@ -129,14 +130,15 @@ pub async fn fetch_nft_holders(
 }
 
 pub async fn update_all_communities(pool: &PgPool, api_key: &str) -> Result<(), anyhow::Error> {
-    let mut path = PathBuf::from(std::env::current_dir()?);
-    path.push("communityAirdrops/communities.json");
-    let file = File::open(&path)?;
+    let base_path = std::env::current_dir()?;
+    let full_path = base_path.join("src").join("community_airdrops").join("communities.json");
+
+    let file = File::open(&full_path)?;
     let reader = BufReader::new(file);
     let configs: Vec<CommunityConfig> = from_reader(reader)?;
 
     for config in configs {
-        let mut tx = pool.begin().await?;
+        let mut tx: sqlx::Transaction<'_, sqlx::Postgres> = pool.begin().await?;
 
         // Fetch existing community with its ID
         let existing_community = handler::get_community_by_address(&mut tx, &config.address).await?;
@@ -181,7 +183,7 @@ pub async fn update_all_communities(pool: &PgPool, api_key: &str) -> Result<(), 
             }
         };
         println!("Created community");
-        
+
         handler::generate_dummy_account_data(
             &mut tx,
             &owners
@@ -199,17 +201,37 @@ pub async fn update_all_communities(pool: &PgPool, api_key: &str) -> Result<(), 
     
     Ok(())
 }
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
-    // Load environment variables from .env file
-    dotenv().ok();
-    let api_key = env::var("ALCHEMY_API_KEY").expect("ALCHEMY_API_KEY must be set");
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"); 
-    let pool = PgPool::connect(&database_url).await?;
-    
-    // can run cron job on top of this to update communities every day
-    //TODO: also add a function to update account data
-    update_all_communities(&pool, &api_key).await?;
 
-    Ok(())
-}
+fn main(){}
+// #[tokio::main]
+// async fn main() -> std::io::Result<()> {
+//     // Load environment variables from .env file
+//     dotenv().ok();
+//     let settings = Settings::new().expect("Failed to load settings");
+
+//       HttpServer::new(move || {
+//         App::new()
+//             .wrap(ApiGuard::new())
+//             .service(
+//                 web::resource("/run-community-airdrops")
+//                 .route(web::post().to(|| async {
+//                     let result: Result<_, Box<dyn std::error::Error>> = async {
+//                         let api_key = env::var("ALCHEMY_API_KEY").expect("ALCHEMY_API_KEY must be set");
+//                         let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"); 
+//                         let pool = PgPool::connect(&database_url).await?;
+                        
+//                         update_all_communities(&pool, &api_key).await?;
+//                         Ok(())
+//                     }.await;
+
+//                     match result {
+//                         Ok(_) => HttpResponse::Ok().body("Diamond hands executed"),
+//                         Err(e) => HttpResponse::InternalServerError().body(e.to_string())
+//                     }
+//                 }))
+//             )
+//     })
+//     .bind(&settings.bind_address)?
+//     .run()
+//     .await
+// }
