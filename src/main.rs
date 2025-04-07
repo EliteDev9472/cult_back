@@ -21,7 +21,7 @@ use uuid::Uuid;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::task;
-
+pub mod utils;
 mod auth;
 mod community_airdrops;
 mod diamond_hands;

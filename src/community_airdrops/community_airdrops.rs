@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, B256, U256};
+use alloy::{primitives::{Address, B256, U256}, rlp::Encodable};
 use alloy_merkle_tree::tree::MerkleTree;
 use chrono::{DateTime, Utc};
 use dotenv::dotenv;
@@ -9,7 +9,7 @@ use std::env;
 use std::str::FromStr;
 use std::fs::File;
 use std::io::BufReader;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context};
 use std::path::PathBuf;
 use serde_json::from_reader;
 use sqlx::PgPool;
@@ -18,6 +18,7 @@ use sqlx::FromRow;
 use std::time::{Instant}; //to measure time for certain operations
 //use cult_backend::auth::middleware::ApiGuard;
 //use cult_backend::config::Settings;
+use crate::utils::update_contract_merkle_roots::update_contract_merkle_roots;
 
 #[derive(Debug, FromRow)] 
 pub struct Community {
@@ -29,10 +30,22 @@ pub struct Community {
     pub merkle_root: Option<Vec<u8>>, // Merkle root (calculated later)
     pub last_updated_time: Option<chrono::DateTime<Utc>>, // Last updated timestamp
     pub merkle_proofs: Option<serde_json::Value>, // Address -> Merkle proofs
+
+    pub holder_count: i32
 }
 #[derive(Debug, Deserialize)]
 pub struct NftOwnersResponse {
     pub owners: Vec<String>,
+}
+
+pub fn load_community_configs() -> Result<Vec<CommunityConfig>> {
+    let base_path = std::env::current_dir()?;
+    let full_path = base_path.join("src").join("community_airdrops").join("communities.json");
+
+    let file = File::open(&full_path)?;
+    let reader = BufReader::new(file);
+    let configs: Vec<CommunityConfig> = from_reader(reader)?;
+    Ok(configs)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -57,6 +70,7 @@ impl Community {
             img_url,
             address,
             chain,
+            holder_count:0,
             merkle_root: None,
             last_updated_time: None,
             merkle_proofs: None,
@@ -128,62 +142,124 @@ pub async fn fetch_nft_holders(
     let owners = response.owners;
     Ok(owners)
 }
+/// Invalidates all old merkle roots in the contract
+async fn invalidate_old_roots(pool: &PgPool) ->Result<(), anyhow::Error>  {
+    println!("Invalidating all existing merkle roots in contract");
 
+    let existing_communities = sqlx::query!(
+        r#"SELECT merkle_root FROM communities WHERE merkle_root IS NOT NULL"#
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let batch: Vec<_> = existing_communities
+        .into_iter()
+        .filter_map(|c| c.merkle_root.map(|r| (r, 0)))
+        .collect();
+
+    if !batch.is_empty() {
+        let (roots, counts): (Vec<_>, Vec<_>) = batch
+            .into_iter()
+            .map(|(root, _)| (format!("0x{}", hex::encode(root)), 0u32))
+            .unzip();
+
+        let _ = update_contract_merkle_roots(roots, counts)
+            .await?;
+    }
+
+    Ok(())
+}
+
+async fn update_new_roots(roots_and_counts: Vec<(Vec<u8>, u32)>) -> Result<()> {
+    println!("Updating contract with new merkle roots");
+
+    if !roots_and_counts.is_empty() {
+        let (roots, counts): (Vec<_>, Vec<_>) = roots_and_counts
+            .into_iter()
+            .map(|(root, count)| (format!("0x{}", hex::encode(root)), count))
+            .unzip();
+
+        update_contract_merkle_roots(roots, counts)
+            .await
+            .context("Failed to update new merkle roots in contract")?;
+    }
+
+    Ok(())
+}
 pub async fn update_all_communities(pool: &PgPool, api_key: &str) -> Result<(), anyhow::Error> {
-    let base_path = std::env::current_dir()?;
-    let full_path = base_path.join("src").join("community_airdrops").join("communities.json");
+    invalidate_old_roots(pool).await?;
+    let configs = load_community_configs()
+    .context("Failed to load community configs")?;
+ 
+    // Parallelize NFT holder fetching
+    let fetch_tasks: Vec<_> = configs.iter()
+        .map(|config| fetch_nft_holders(config, api_key))
+        .collect();
+    
+    let holders = futures::future::try_join_all(fetch_tasks).await?;
+    
+    // Store roots and counts for batch update
+    let mut new_roots_and_counts = Vec::new();
 
-    let file = File::open(&full_path)?;
-    let reader = BufReader::new(file);
-    let configs: Vec<CommunityConfig> = from_reader(reader)?;
-
-    for config in configs {
+    for (config, owners) in configs.into_iter().zip(holders) {
         let mut tx: sqlx::Transaction<'_, sqlx::Postgres> = pool.begin().await?;
 
         // Fetch existing community with its ID
-        let existing_community = handler::get_community_by_address(&mut tx, &config.address).await?;
-        let start_time = Instant::now();
-        // Fetch current NFT holders from blockchain
-        let owners = fetch_nft_holders(&config, api_key).await?;
+        let existing = handler::get_community_by_address(&mut tx, &config.address).await?;
         
-        // Create temporary community to calculate Merkle data
-        let mut temp_community = Community::new(
-            config.name.clone(),
-            config.img_url.clone(),
-            config.address.clone(),
-            config.chain.clone()
-        ).map_err(|e| anyhow!("Community creation error: {}", e))?;
-        
-        temp_community.set_merkle_data(owners.clone())
-            .map_err(|e| anyhow!("Merkle data calculation failed: {}", e))?;
-        let duration = start_time.elapsed();
-        println!("Processing took: {:?}", duration); 
+        let config_address = config.address.clone();
+        let owner_data = owners.clone();
+
+        // Offload Merkle tree generation to blocking thread
+        let merkle_data = {
+            let config = config.clone();
+            let owners = owners.clone();
+            
+            tokio::task::spawn_blocking(move || {
+                let mut community = Community::new(
+                    config.name,
+                    config.img_url,
+                    config.address,
+                    config.chain
+                ).map_err(|e| anyhow!("Community creation error: {}", e))?;
+                
+                community.set_merkle_data(owners)
+                    .map_err(|e| anyhow!("Merkle data calculation failed: {}", e))?;
+                
+                Ok::<_, anyhow::Error>((community.merkle_root, community.merkle_proofs))
+            }).await??
+        };
+        let holder_count = owners.len() as i32;
+
+        if let Some(root) = &merkle_data.0 {
+            new_roots_and_counts.push((root.clone(), holder_count as u32));
+        }
+
         // Update or create community in database
-        let db_community = match existing_community {
-            Some(existing) => {
-                handler::update_community(
-                    &mut tx,
-                    &existing.address,
-                    temp_community.merkle_root.as_ref(),
-                    temp_community.merkle_proofs.as_ref(),
-                    temp_community.last_updated_time
-                ).await?
-            }
-            None => {
-                handler::create_community(
-                    &mut tx,
-                    &temp_community.name,
-                    &temp_community.img_url,
-                    &temp_community.address,
-                    &temp_community.chain,
-                    temp_community.merkle_root.as_ref(),
-                    temp_community.merkle_proofs.as_ref(),
-                    temp_community.last_updated_time
-                ).await?
-            }
+        match existing {
+            Some(c) => handler::update_community(
+                &mut tx,
+                &c.address,
+                merkle_data.0.as_ref(),
+                merkle_data.1.as_ref(),
+                Some(Utc::now()),
+                holder_count
+            ).await?,
+            None => handler::create_community(
+                &mut tx,
+                &config.name,
+                &config.img_url,
+                &config.address,
+                &config.chain,
+                holder_count as u32,
+                merkle_data.0.as_ref(),
+                merkle_data.1.as_ref(),
+                Some(Utc::now())
+            ).await?
         };
         println!("Created community");
 
+        //TODO: this needs to be updated to choose different defaults
         handler::generate_dummy_account_data(
             &mut tx,
             &owners
@@ -192,13 +268,16 @@ pub async fn update_all_communities(pool: &PgPool, api_key: &str) -> Result<(), 
         // Atomic membership refresh
         handler::refresh_community_memberships(
             &mut tx,
-            db_community.id,
+            config.address,
             &owners
         ).await?;
 
         tx.commit().await?;
     }
     
+
+       // Update contract with all new roots at once
+       update_new_roots(new_roots_and_counts).await?;
     Ok(())
 }
 

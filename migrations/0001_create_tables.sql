@@ -20,10 +20,68 @@ CREATE TABLE cult_token (
     market_cap NUMERIC NOT NULL,
     circulating_supply NUMERIC NOT NULL,
     total_fee NUMERIC NOT NULL,
-    volume NUMERIC NOT NULL
+    volume NUMERIC NOT NULL,
+    total_airdrop_recipient_count BIGINT NOT NULL,
+    total_amount NUMERIC NOT NULL
 );
 
---TODO: New Table
+-- Communities Table (unchanged)
+CREATE TABLE communities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    img_url TEXT NOT NULL,
+    address TEXT NOT NULL UNIQUE,
+    chain TEXT NOT NULL,
+    merkle_root BYTEA, 
+    last_updated_time TIMESTAMPTZ, 
+    merkle_proofs JSONB,
+    holder_count INTEGER NOT NULL
+);
+
+
+-- Account Table
+CREATE TABLE account (
+    id TEXT PRIMARY KEY, -- Storing address as text
+    slug TEXT,
+    referral_code TEXT,
+    diamond_hand_probability INT NOT NULL CHECK (diamond_hand_probability >= 0), -- Ensure non-negative
+    referrer_id TEXT REFERENCES account(id) ON DELETE SET NULL, -- Foreign key reference
+    total_referrals INT CHECK (total_referrals >= 0), -- Ensure non-negative
+    fee_collected NUMERIC NOT NULL, -- Store large U256 values safely
+    twitter TEXT,
+    discord TEXT
+);
+
+
+-- 2. Create the corrected token_airdrops table
+CREATE TABLE token_airdrops (
+    id SERIAL PRIMARY KEY,
+    transaction_hash TEXT NOT NULL,  -- Same for all roots in one event
+    token_id TEXT NOT NULL REFERENCES cult_token(id),
+    merkle_root BYTEA NOT NULL,      -- Match communities.merkle_root type
+    community_id TEXT NOT NULL REFERENCES communities(id),
+    community_name TEXT NOT NULL,    -- Snapshot at airdrop time
+    merkle_proofs JSONB NOT NULL,   -- Snapshot at airdrop time
+    total_amount NUMERIC NOT NULL,
+    total_recipient_count BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE airdrop_recipients (
+    account_id TEXT REFERENCES account(id),
+    token_airdrop_id INTEGER REFERENCES token_airdrops(id),
+    PRIMARY KEY (account_id, token_airdrop_id)
+);
+
+CREATE INDEX idx_airdrop_recipients_account ON airdrop_recipients(account_id);
+CREATE INDEX idx_airdrop_recipients_airdrop ON airdrop_recipients(token_airdrop_id);
+
+
+-- 3. Create optimal indexes
+CREATE INDEX idx_token_airdrops_token ON token_airdrops(token_id);
+CREATE INDEX idx_token_airdrops_community_id ON token_airdrops(community_id);
+
+
 CREATE TABLE token_stats (
     token_id TEXT PRIMARY KEY REFERENCES cult_token(id),
     
@@ -42,22 +100,12 @@ CREATE TABLE token_stats (
 );
 
 
--- Account Table
-CREATE TABLE account (
-    id TEXT PRIMARY KEY, -- Storing address as text
-    slug TEXT,
-    referral_code TEXT,
-    diamond_hand_probability INT NOT NULL CHECK (diamond_hand_probability >= 0), -- Ensure non-negative
-    referrer_id TEXT REFERENCES account(id) ON DELETE SET NULL, -- Foreign key reference
-    total_referrals INT CHECK (total_referrals >= 0), -- Ensure non-negative
-    fee_collected NUMERIC NOT NULL, -- Store large U256 values safely
-    twitter TEXT,
-    discord TEXT
-);
-
 CREATE TABLE diamond_hand_list (
     account_id TEXT PRIMARY KEY REFERENCES account(id),
-    selected_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    selected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    merkle_root BYTEA,  --not needed
+    last_updated_time TIMESTAMPTZ, 
+    merkle_proofs JSONB  --not needed
 );
 
 -- TokenBalance Table
@@ -111,17 +159,7 @@ CREATE TABLE token_ohlcv (
     PRIMARY KEY (token_id, interval_start)
 );
 
--- Communities Table (unchanged)
-CREATE TABLE communities (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    img_url TEXT NOT NULL,
-    address TEXT NOT NULL UNIQUE,
-    chain TEXT NOT NULL,
-    merkle_root BYTEA, 
-    last_updated_time TIMESTAMPTZ, 
-    merkle_proofs JSONB 
-);
+
 
 -- Account_Communities Table 
 CREATE TABLE account_communities (

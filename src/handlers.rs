@@ -28,6 +28,7 @@ where
     let fee_collected: f64 = 0.0;
     let twitter: Option<&str> = None;
     let discord: Option<&str> = None;
+    
 
     sqlx::query(
         r#"
@@ -57,10 +58,6 @@ pub async fn handle_cult_token_created(
     tx: &mut sqlx::Transaction<'_, Postgres>
 ) -> Result<(), anyhow::Error> {
     println!("handle_cult_token_created");
-    // Convert u64 to i64 for SQLx compatibility
-    let block_number = event.block_number.to_string();
-    let block_timestamp = event.block_timestamp.to_string();
-
     let mut ipfs_content = "".to_string();
     // Handle IPFS data
     if event.token_uri.starts_with("ipfs://") {
@@ -92,6 +89,13 @@ pub async fn handle_cult_token_created(
         Err(_) => return Err(anyhow::anyhow!("Block number {} too large to fit in i64", event.block_number)),
    };
 
+   let total_airdrop_recipient_count_db: i64 = match event.total_airdrop_recipient_count.try_into() {
+    std::result::Result::Ok(ta) => ta,
+    Err(_) => return Err(anyhow::anyhow!("total_airdrop_recipient_count {} too large to fit in i64", event.total_airdrop_recipient_count)),
+};
+
+let total_amount = BigDecimal::from_str(&event.total_amount.to_string())?;
+
    // Convert u64 Unix timestamp to DateTime<Utc> for TIMESTAMPTZ
    let block_timestamp_db: DateTime<Utc> = Utc.timestamp_opt(event.block_timestamp as i64, 0).single()
        .ok_or_else(|| anyhow::anyhow!("Invalid block timestamp: {}", event.block_timestamp))?;
@@ -110,9 +114,9 @@ pub async fn handle_cult_token_created(
         INSERT INTO cult_token (
             id, factory_address, token_creator, protocol_fee_recipient, bonding_curve,
             token_uri, name, symbol, pool_address, block_number,
-            block_timestamp, transaction_hash, holder_count, airdrop_contract, ipfs_content, chain, price, market_cap, circulating_supply, total_fee, volume
+            block_timestamp, transaction_hash, holder_count, airdrop_contract, ipfs_content, chain, price, market_cap, circulating_supply, total_fee, volume,total_airdrop_recipient_count,total_amount
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
         "#
     )
     .bind(&event.token_address)
@@ -135,7 +139,9 @@ pub async fn handle_cult_token_created(
     .bind(market_cap_db) //market_cap - assuming 0 for now
     .bind(circulating_supply_db) //circulating_supply -needs to change based on airdrop contract
     .bind(total_fee_db)
-    .bind(volume_db) //total_fee - assuming 0 for now
+    .bind(volume_db)
+    .bind(total_airdrop_recipient_count_db)
+    .bind(&total_amount) //total_fee - assuming 0 for now
     .execute(&mut **tx).await?;
 
     // Create accounts
@@ -166,9 +172,98 @@ pub async fn handle_cult_token_created(
     .bind(0.0f64)
     .execute(&mut **tx).await?;
     
+
+    // Process each merkle root from the event
+    for merkle_root in event.merkle_roots {
+        
+        // Convert hex string (with or without 0x prefix) to Vec<u8>
+        let merkle_root_bytes = hex::decode(merkle_root.trim_start_matches("0x"))
+        .map_err(|e| anyhow::anyhow!("Invalid merkle root hex: {}, error: {}", merkle_root, e))?;
+    
+        
+        // Find the community for this merkle root
+        let community: Option<(String, String, serde_json::Value)> = sqlx::query_as(
+            r#"
+            SELECT id, name, merkle_proofs 
+            FROM communities 
+            WHERE merkle_root = $1
+            "#
+        )
+        .bind(&merkle_root_bytes)
+        .fetch_optional(&mut **tx)
+        .await?;
+
+        let (community_id, community_name, merkle_proofs) = match community {
+            Some(c) => c,
+            None => {
+                eprintln!("No community found for merkle root: {:?}", merkle_root);
+                continue; // Skip but continue processing other roots
+            }
+        };
+
+        // Convert recipient count to i64
+        let recipients_db: i64 = event.total_airdrop_recipient_count
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Recipient count exceeds i64 bounds"))?;
+
+        // Insert into token_airdrops using event totals directly
+        sqlx::query(
+            r#"
+            INSERT INTO token_airdrops (
+                transaction_hash, 
+                token_id, 
+                merkle_root, 
+                community_id, 
+                community_name, 
+                merkle_proofs, 
+                total_amount, 
+                total_recipient_count, 
+                created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            "#
+        )
+        .bind(&event.transaction_hash)
+        .bind(&event.token_address)
+        .bind(&merkle_root_bytes)
+        .bind(&community_id)
+        .bind(&community_name)
+        .bind(&merkle_proofs)
+        .bind(&total_amount) // Use total directly from event
+        .bind(recipients_db)       // Use total directly from event
+        .execute(&mut **tx)
+        .await?;
+
+        let merkle_proofs_obj = merkle_proofs
+        .as_object()
+        .ok_or(anyhow::anyhow!("Invalid merkle_proofs format"))?;
+    
+
+
+        let recipient_addresses: Vec<&str> = merkle_proofs_obj.keys().map(|k| k.as_str()).collect();
+
+
+        sqlx::query(
+            r#"
+            WITH new_airdrop AS (
+                SELECT currval('token_airdrops_id_seq') AS id
+            )
+            INSERT INTO airdrop_recipients (account_id, token_airdrop_id)
+            SELECT unnest($1::TEXT[]), na.id
+            FROM new_airdrop na
+            ON CONFLICT DO NOTHING
+            "#
+        )
+        .bind(&recipient_addresses)
+        .execute(&mut **tx)
+        .await?;
+    }
+
     Ok(())
 }
 
+
+//to update token balance, we should probably look at thoken transfer
 pub async fn handle_cult_token_buy(
     event: CultTokenBuyEvent,
     tx: &mut sqlx::Transaction<'_, Postgres>
@@ -312,559 +407,436 @@ pub async fn handle_cult_token_buy(
     Ok(())
 }
 
-
-// pub async fn handle_cult_token_created(
-//     event: CultTokenCreatedEvent,
-//     pool: &Pool<Postgres>,
-// ) -> Result<(), anyhow::Error> {
-//     log::info!("CultTokenCreated: {}", event.token_address);
-
-//     // Load or create accounts
-//     let token_creator = load_or_create_account(pool, &event.token_creator, None).await?;
-//     let airdrop_contract = load_or_create_account(pool, &event.airdrop_contract, Some("Airdrop Contract".to_string())).await?;
-
-//     // Create a new cult token
-//     let cult_token = CultToken {
-//         id: None,
-//         factory_address: event.factory_address.clone(),
-//         token_creator: token_creator.id.unwrap().to_string(),
-//         protocol_fee_recipient: event.protocol_fee_recipient.clone(),
-//         bonding_curve: event.bonding_curve.clone(),
-//         token_uri: event.token_uri.clone(),
-//         name: event.name.clone(),
-//         symbol: event.symbol.clone(),
-//         token_address: event.token_address.clone(),
-//         pool_address: event.pool_address.clone(),
-//         block_number: event.block_number as i64,
-//         block_timestamp: Utc.timestamp_opt(event.block_timestamp as i64, 0).unwrap(),
-//         transaction_hash: event.transaction_hash.clone(),
-//         holder_count: 0,
-//         airdrop_contract: airdrop_contract.id.unwrap().to_string(),
-//         trades: Some(vec![]),
-//         balances: Some(vec![]),
-//         ipfs_data: Some(vec![]),
-//     };
-
-//     // Insert the new cult token
-//     let token_id = insert_cult_token(pool, &cult_token).await?;
-
-//     // Handle IPFS data
-//     let ipfs_prefix = "ipfs://";
-//     if let Some(ipfs_index) = cult_token.token_uri.find(ipfs_prefix) {
-//         let hash = &cult_token.token_uri[(ipfs_index + ipfs_prefix.len())..];
-
-//         let client = reqwest::Client::new();
-//         let response = client
-//             .get(&format!("https://ipfs.io/ipfs/{}", hash))
-//             .header("Accept", "application/json")
-//             .send()
-//             .await?;
-
-//         if response.status().is_success() {
-//             let content = response.text().await?;
-//             let ipfs_data = TokenIPFSData {
-//                 id: None,
-//                 hash: hash.to_string(),
-//                 content,
-//                 token_id: token_id,
-//             };
-
-//             insert_token_ipfs_data(pool, &ipfs_data).await?;
-//         }
-//     }
-
-//     Ok(())
-// }
-
-// pub async fn handle_cult_token_buy(
-//     event: CultTokenBuyEvent,
-//     pool: &Pool<Postgres>,
-// ) -> Result<(), anyhow::Error> {
-//     log::info!("CultTokenBuy: {}, {}", event.buyer, event.recipient);
-
-//     let trader = load_or_create_account(pool, &event.buyer, None).await?;
-//     let recipient = load_or_create_account(pool, &event.recipient, None).await?;
-//     let order_referrer = load_or_create_account(pool, &event.order_referrer, None).await?;
-
-//     let token_trade = TokenTrade {
-//         id: None,
-//         token_id: get_token_id_by_address(pool, &event.srcAddress).await?,
-//         trade_type: TradeType::Buy,
-//         trader_id: trader.id.unwrap(),
-//         recipient_id: recipient.id.unwrap(),
-//         order_referrer_id: order_referrer.id.unwrap(),
-//         total_eth: event.total_eth,
-//         eth_fee: event.eth_fee,
-//         eth_amount: event.eth_sold,
-//         token_amount: event.tokens_bought,
-//         trader_token_balance: event.buyer_token_balance,
-//         total_supply: event.total_supply,
-//         market_type: event.market_type as i64,
-//         timestamp: Utc.timestamp_opt(event.block_timestamp as i64, 0).unwrap(),
-//         transaction_hash: event.transaction_hash.clone(),
-//     };
-
-//     insert_token_trade(pool, &token_trade).await?;
-
-//     // Update token balance
-//     let cult_token = get_cult_token_by_address(pool, &token_address).await?;
-//     update_token_balance(
-//         pool,
-//         &cult_token,
-//         trader.id.unwrap(),
-//         event.buyer_token_balance,
-//     ).await?;
-
-//     Ok(())
-// }
-
-// pub async fn handle_cult_token_sell(
-//     event: CultTokenSellEvent,
-//     token_address: String,
-//     pool: &Pool<Postgres>,
-// ) -> Result<(), anyhow::Error> {
-//     let trader = load_or_create_account(pool, &event.seller, None).await?;
-//     let recipient = load_or_create_account(pool, &event.recipient, None).await?;
-//     let order_referrer = load_or_create_account(pool, &event.order_referrer, None).await?;
-
-//     let token_trade = TokenTrade {
-//         id: None,
-//         token_id: get_token_id_by_address(pool, &token_address).await?,
-//         trade_type: TradeType::Sell,
-//         trader_id: trader.id.unwrap(),
-//         recipient_id: recipient.id.unwrap(),
-//         order_referrer_id: order_referrer.id.unwrap(),
-//         total_eth: event.total_eth,
-//         eth_fee: event.eth_fee,
-//         eth_amount: event.eth_bought,
-//         token_amount: event.tokens_sold,
-//         trader_token_balance: event.seller_token_balance,
-//         total_supply: event.total_supply,
-//         market_type: event.market_type as i64,
-//         timestamp: Utc.timestamp_opt(event.block_timestamp as i64, 0).unwrap(),
-//         transaction_hash: event.transaction_hash.clone(),
-//     };
-
-//     insert_token_trade(pool, &token_trade).await?;
-
-//     // Update token balance
-//     let cult_token = get_cult_token_by_address(pool, &token_address).await?;
-//     update_token_balance(
-//         pool,
-//         &cult_token,
-//         trader.id.unwrap(),
-//         event.seller_token_balance,
-//     ).await?;
-
-//     Ok(())
-// }
-
-// pub async fn handle_cult_token_transfer(
-//     event: CultTokenTransferEvent,
-//     token_address: String,
-//     pool: &Pool<Postgres>,
-// ) -> Result<(), anyhow::Error> {
-//     log::info!("TRANSFERING TOKEN");
-
-//     let token = match get_cult_token_by_address(pool, &token_address).await {
-//         Ok(token) => token,
-//         Err(_) => return Ok(()), // If token doesn't exist, just return
-//     };
-
-//     let from = load_or_create_account(pool, &event.from, None).await?;
-//     let to = load_or_create_account(pool, &event.to, None).await?;
-
-//     if from.id.unwrap().to_string() != "0x0000000000000000000000000000000000000000" {
-//         update_token_balance(
-//             pool,
-//             &token,
-//             from.id.unwrap(),
-//             event.from_token_balance,
-//         ).await?;
-//     }
-
-//     update_token_balance(
-//         pool,
-//         &token,
-//         to.id.unwrap(),
-//         event.to_token_balance,
-//     ).await?;
-
-//     Ok(())
-// }
-
-// pub async fn handle_cult_token_fees(
-//     event: CultTokenFeesEvent,
-//     pool: &Pool<Postgres>,
-// ) -> Result<(), anyhow::Error> {
-//     log::info!("CultTokenFees: {}", event.order_referrer);
-
-//     let order_referrer = load_or_create_account(pool, &event.order_referrer, None).await?;
-
-//     // Get existing account details
-//     let order_referrer_account = get_account_by_id(pool, order_referrer.id.unwrap()).await?;
-
-//     // Update account
-//     let updated_account = Account {
-//         id: order_referrer.id,
-//         slug: order_referrer_account.slug.or(Some("Order Referrer Fees".to_string())),
-//         diamond_hand_probability: order_referrer_account.diamond_hand_probability,
-//         referrer_id: order_referrer_account.referrer_id,
-//         total_referrals: Some(order_referrer_account.total_referrals.unwrap_or(0) + 1),
-//         fee_collected: order_referrer_account.fee_collected + event.order_referrer_fee,
-//     };
-
-//     update_account(pool, &updated_account).await?;
-
-//     Ok(())
-// }
-
-// // Helper functions
-
-// async fn load_or_create_account(
-//     pool: &Pool<Postgres>,
-//     address: &str,
-//     slug: Option<String>,
-// ) -> Result<Account, anyhow::Error> {
-//     if let Ok(account) = get_account_by_address(pool, address).await {
-//         return Ok(account);
-//     }
-
-//     let account = Account {
-//         id: None,
-//         slug,
-//         diamond_hand_probability: 0,
-//         referrer_id: None,
-//         total_referrals: Some(0),
-//         fee_collected: 0,
-//     };
-
-//     let id = insert_account(pool, &account).await?;
-//     Ok(Account { id: Some(id), ..account })
-// }
-
-// async fn update_token_balance(
-//     pool: &Pool<Postgres>,
-//     token: &CultToken,
-//     account_id: i64,
-//     new_value: i64,
-// ) -> Result<(), anyhow::Error> {
-//     log::info!("UPDATING TOKEN BALANCE");
-
-//     let token_id = token.id.unwrap();
-//     let mut old_value: i64 = 0;
-
-//     // Try to get existing balance
-//     match get_token_balance(pool, token_id, account_id).await {
-//         Ok(balance) => {
-//             old_value = balance.value;
-
-//             // Update existing balance
-//             let now = Utc::now();
-//             let mut updated_balance = balance;
-//             updated_balance.value = new_value;
-
-//             // If selling tokens, update the last_sold timestamp
-//             if new_value < old_value {
-//                 updated_balance.last_sold = now;
-//                 updated_balance.held_for = (now - updated_balance.last_bought).num_seconds();
-//             }
-
-//             update_token_balance_db(pool, &updated_balance).await?;
-//         },
-//         Err(_) => {
-//             // Create new balance
-//             let balance = TokenBalance {
-//                 id: None,
-//                 token_id,
-//                 account_id,
-//                 value: new_value,
-//                 last_bought: Utc::now(),
-//                 last_sold: Utc::now(), // Set to the same as last_bought initially
-//                 held_for: 0,
-//             };
-
-//             insert_token_balance(pool, &balance).await?;
-//         }
-//     }
-
-//     // Update holder count on the token
-//     let mut updated_token = token.clone();
-
-//     if old_value == 0 && new_value > 0 {
-//         updated_token.holder_count += 1;
-//     }
-//     // Holder lost all tokens (old_value > 0, new_value = 0)
-//     else if old_value > 0 && new_value == 0 {
-//         updated_token.holder_count -= 1;
-//     }
-
-//     update_cult_token(pool, &updated_token).await?;
-
-//     Ok(())
-// }
-
-// // Database functions
-
-// async fn insert_cult_token(pool: &Pool<Postgres>, token: &CultToken) -> Result<i64, anyhow::Error> {
-//     let record = sqlx::query!(
-//         r#"
-//         INSERT INTO cult_token (
-//             factory_address, token_creator, protocol_fee_recipient, bonding_curve,
-//             token_uri, name, symbol, token_address, pool_address, block_number,
-//             block_timestamp, transaction_hash, holder_count, airdrop_contract
-//         )
-//         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-//         RETURNING id
-//         "#,
-//         token.factory_address,
-//         token.token_creator,
-//         token.protocol_fee_recipient,
-//         token.bonding_curve,
-//         token.token_uri,
-//         token.name,
-//         token.symbol,
-//         token.token_address,
-//         token.pool_address,
-//         token.block_number,
-//         token.block_timestamp,
-//         token.transaction_hash,
-//         token.holder_count,
-//         token.airdrop_contract
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record.id)
-// }
-
-// async fn update_cult_token(pool: &Pool<Postgres>, token: &CultToken) -> Result<(), anyhow::Error> {
-//     sqlx::query!(
-//         r#"
-//         UPDATE cult_token
-//         SET holder_count = $1
-//         WHERE id = $2
-//         "#,
-//         token.holder_count,
-//         token.id
-//     )
-//     .execute(pool)
-//     .await?;
-
-//     Ok(())
-// }
-
-// async fn get_cult_token_by_address(pool: &Pool<Postgres>, address: &str) -> Result<CultToken, anyhow::Error> {
-//     let record = sqlx::query_as!(
-//         CultToken,
-//         r#"
-//         SELECT * FROM cult_token
-//         WHERE token_address = $1
-//         "#,
-//         address
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record)
-// }
-
-// async fn get_token_id_by_address(pool: &Pool<Postgres>, address: &str) -> Result<i64, anyhow::Error> {
-//     let record = sqlx::query!(
-//         r#"
-//         SELECT id FROM cult_token
-//         WHERE token_address = $1
-//         "#,
-//         address
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record.id)
-// }
-
-// async fn insert_token_ipfs_data(pool: &Pool<Postgres>, data: &TokenIPFSData) -> Result<i64, anyhow::Error> {
-//     let record = sqlx::query!(
-//         r#"
-//         INSERT INTO token_ipfs_data (hash, content, token_id)
-//         VALUES ($1, $2, $3)
-//         RETURNING id
-//         "#,
-//         data.hash,
-//         data.content,
-//         data.token_id
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record.id)
-// }
-
-// async fn insert_account(pool: &Pool<Postgres>, account: &Account) -> Result<i64, anyhow::Error> {
-//     let record = sqlx::query!(
-//         r#"
-//         INSERT INTO account (slug, diamond_hand_probability, referrer_id, total_referrals, fee_collected)
-//         VALUES ($1, $2, $3, $4, $5)
-//         RETURNING id
-//         "#,
-//         account.slug,
-//         account.diamond_hand_probability,
-//         account.referrer_id,
-//         account.total_referrals,
-//         account.fee_collected
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record.id)
-// }
-
-// async fn update_account(pool: &Pool<Postgres>, account: &Account) -> Result<(), anyhow::Error> {
-//     sqlx::query!(
-//         r#"
-//         UPDATE account
-//         SET slug = $1, diamond_hand_probability = $2, referrer_id = $3,
-//             total_referrals = $4, fee_collected = $5
-//         WHERE id = $6
-//         "#,
-//         account.slug,
-//         account.diamond_hand_probability,
-//         account.referrer_id,
-//         account.total_referrals,
-//         account.fee_collected,
-//         account.id
-//     )
-//     .execute(pool)
-//     .await?;
-
-//     Ok(())
-// }
-
-// async fn get_account_by_address(pool: &Pool<Postgres>, address: &str) -> Result<Account, anyhow::Error> {
-//     let record = sqlx::query_as!(
-//         Account,
-//         r#"
-//         SELECT * FROM account
-//         WHERE id = $1
-//         "#,
-//         address
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record)
-// }
-
-// async fn get_account_by_id(pool: &Pool<Postgres>, id: i64) -> Result<Account, anyhow::Error> {
-//     let record = sqlx::query_as!(
-//         Account,
-//         r#"
-//         SELECT * FROM account
-//         WHERE id = $1
-//         "#,
-//         id
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record)
-// }
-
-// async fn insert_token_trade(pool: &Pool<Postgres>, trade: &TokenTrade) -> Result<i64, anyhow::Error> {
-//     let trade_type = match trade.trade_type {
-//         TradeType::Buy => "BUY",
-//         TradeType::Sell => "SELL",
-//     };
-
-//     let record = sqlx::query!(
-//         r#"
-//         INSERT INTO token_trade (
-//             token_id, trade_type, trader_id, recipient_id, order_referrer_id,
-//             total_eth, eth_fee, eth_amount, token_amount, trader_token_balance,
-//             total_supply, market_type, timestamp, transaction_hash
-//         )
-//         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-//         RETURNING id
-//         "#,
-//         trade.token_id,
-//         trade_type,
-//         trade.trader_id,
-//         trade.recipient_id,
-//         trade.order_referrer_id,
-//         trade.total_eth,
-//         trade.eth_fee,
-//         trade.eth_amount,
-//         trade.token_amount,
-//         trade.trader_token_balance,
-//         trade.total_supply,
-//         trade.market_type,
-//         trade.timestamp,
-//         trade.transaction_hash
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record.id)
-// }
-
-// async fn get_token_balance(pool: &Pool<Postgres>, token_id: i64, account_id: i64) -> Result<TokenBalance, anyhow::Error> {
-//     let record = sqlx::query_as!(
-//         TokenBalance,
-//         r#"
-//         SELECT * FROM token_balance
-//         WHERE token_id = $1 AND account_id = $2
-//         "#,
-//         token_id,
-//         account_id
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record)
-// }
-
-// async fn insert_token_balance(pool: &Pool<Postgres>, balance: &TokenBalance) -> Result<i64, anyhow::Error> {
-//     let record = sqlx::query!(
-//         r#"
-//         INSERT INTO token_balance (token_id, account_id, value, last_bought, last_sold, held_for)
-//         VALUES ($1, $2, $3, $4, $5, $6)
-//         RETURNING id
-//         "#,
-//         balance.token_id,
-//         balance.account_id,
-//         balance.value,
-//         balance.last_bought,
-//         balance.last_sold,
-//         balance.held_for
-//     )
-//     .fetch_one(pool)
-//     .await?;
-
-//     Ok(record.id)
-// }
-
-// async fn update_token_balance_db(pool: &Pool<Postgres>, balance: &TokenBalance) -> Result<(), anyhow::Error> {
-//     sqlx::query!(
-//         r#"
-//         UPDATE token_balances
-//         SET value = $1, last_bought = $2, last_sold = $3, held_for = $4
-//         WHERE id = $5
-//         "#,
-//         balance.value,
-//         balance.last_bought,
-//         balance.last_sold,
-//         balance.held_for,
-//         balance.id
-//     )
-//     .execute(pool)
-//     .await?;
-
-//     Ok(())
-// }
+pub async fn handle_cult_token_sell(
+    event: CultTokenSellEvent,
+    tx: &mut sqlx::Transaction<'_, Postgres>
+) -> Result<(), anyhow::Error> {
+    println!("handle_cult_token_sell");
+
+    // Convert values to BigDecimal
+    let total_eth_bd = BigDecimal::from_str(&event.total_eth.to_string())?;
+    let eth_fee_bd = BigDecimal::from_str(&event.eth_fee.to_string())?;
+    let eth_bought_bd = BigDecimal::from_str(&event.eth_bought.to_string())?;
+    let tokens_sold_bd = BigDecimal::from_str(&event.tokens_sold.to_string())?;
+    let seller_token_balance_bd = BigDecimal::from_str(&event.seller_token_balance.to_string())?;
+    let total_supply_bd = BigDecimal::from_str(&event.total_supply.to_string())?;
+
+    // Create accounts if they don't exist
+    create_account(&mut *tx, &event.seller, None, None).await?;
+    create_account(&mut *tx, &event.recipient, None, None).await?;
+    create_account(&mut *tx, &event.order_referrer, None, None).await?;
+
+    // Insert trade record
+    sqlx::query!(
+        r#"
+        INSERT INTO token_trade (
+            token_id,
+            trade_type,
+            trader_id,
+            recipient_id,
+            order_referrer_id,
+            total_eth,
+            eth_fee,
+            eth_amount,
+            token_amount,
+            trader_token_balance,
+            total_supply,
+            market_type,
+            timestamp,
+            transaction_hash
+        )
+        VALUES (
+            $1, 'Sell'::trade_type, $2, $3, $4,
+            $5, $6, $7, $8,
+            $9, $10, $11,
+            TO_TIMESTAMP($12), $13
+        )
+        ON CONFLICT (transaction_hash, token_id) DO NOTHING
+        RETURNING token_id
+        "#,
+        event.token_id,
+        event.seller,
+        event.recipient,
+        event.order_referrer,
+        total_eth_bd,
+        eth_fee_bd,
+        eth_bought_bd,
+        tokens_sold_bd,
+        seller_token_balance_bd,
+        total_supply_bd,
+        event.market_type as i16,
+        event.block_timestamp as i64,
+        event.transaction_hash
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    // 2) Calculate price & market_cap, then parse them as BigDecimal
+    let price_str = format!("{:.18}", event.eth_bought as f64 / event.tokens_sold as f64);
+    let market_cap_str = (event.eth_bought as f64 * event.total_supply as f64 / event.tokens_sold as f64).to_string();
+
+    let price_bd = BigDecimal::from_str(&price_str)?;
+    let market_cap_bd = BigDecimal::from_str(&market_cap_str)?;
+
+    // 3) Insert/Update the user's token_balance
+    // Combined query that updates holding_duration only if it's NULL or 0
+    sqlx::query!(
+        r#"
+        INSERT INTO token_balance (
+            account_id,
+            token_id,
+            first_bought,
+            volume,
+            holding_duration,
+            pnl,
+            holdings_value,
+            duration_z,
+            pnl_z,
+            value_z
+        )
+        VALUES (
+            $1,
+            $2,
+            NOW(),
+            $3,
+            0,
+            0,
+            $4,
+            0,
+            0,
+            0
+        )
+        ON CONFLICT (account_id, token_id)
+        DO UPDATE SET
+            volume = token_balance.volume + EXCLUDED.volume,
+            holdings_value = EXCLUDED.holdings_value,
+            holding_duration = CASE 
+                WHEN token_balance.holding_duration IS NULL OR token_balance.holding_duration = 0 
+                THEN EXTRACT(EPOCH FROM (NOW() - token_balance.first_bought))
+                ELSE token_balance.holding_duration
+            END
+        "#,
+        event.seller,
+        event.token_id,
+        total_eth_bd,
+        seller_token_balance_bd
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    let should_decrement = seller_token_balance_bd == BigDecimal::from(0);
+
+    // 4) Update cult_token
+    // Use different queries based on the condition
+    let holder_count_adjustment = if should_decrement { -1 } else { 0 };
+
+    sqlx::query!(
+        r#"
+        UPDATE cult_token
+        SET
+            holder_count = holder_count + $7,
+            price = $2,
+            circulating_supply = $3,
+            market_cap = $4,
+            total_fee = total_fee + $5,
+            volume = volume + $6
+        WHERE id = $1
+        "#,
+        event.token_id,
+        price_bd,
+        total_supply_bd,
+        market_cap_bd,
+        eth_fee_bd,
+        total_eth_bd,
+        holder_count_adjustment
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn handle_cult_token_transfer(
+    event: CultTokenTransferEvent,
+    tx: &mut sqlx::Transaction<'_, Postgres>
+) -> Result<(), anyhow::Error> {
+    println!("TRANSFERING TOKEN");
+
+    // Skip zero address transfers
+    if event.from == "0x0000000000000000000000000000000000000000" {
+        return Ok(());
+    }
+
+    // Create accounts if they don't exist
+    create_account(&mut *tx, &event.from, None, None).await?;
+    create_account(&mut *tx, &event.to, None, None).await?;
+
+    // Convert balances to BigDecimal
+    let from_balance_bd = BigDecimal::from_str(&event.from_token_balance.to_string())?;
+    let to_balance_bd = BigDecimal::from_str(&event.to_token_balance.to_string())?;
+
+    // Update balances for both accounts
+    // First update the sender's balance
+    sqlx::query!(
+        r#"
+        INSERT INTO token_balance (
+            account_id,
+            token_id,
+            first_bought,
+            volume,
+            holding_duration,
+            pnl,
+            holdings_value,
+            duration_z,
+            pnl_z,
+            value_z
+        )
+        VALUES (
+            $1,
+            $2,
+            NOW(),
+            0,
+            0,
+            0,
+            $3,
+            0,
+            0,
+            0
+        )
+        ON CONFLICT (account_id, token_id)
+        DO UPDATE SET
+            holdings_value = EXCLUDED.holdings_value
+        "#,
+        event.from,
+        event.token_id,
+        from_balance_bd
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    // Then update the receiver's balance
+    sqlx::query!(
+        r#"
+        INSERT INTO token_balance (
+            account_id,
+            token_id,
+            first_bought,
+            volume,
+            holding_duration,
+            pnl,
+            holdings_value,
+            duration_z,
+            pnl_z,
+            value_z
+        )
+        VALUES (
+            $1,
+            $2,
+            NOW(),
+            0,
+            0,
+            0,
+            $3,
+            0,
+            0,
+            0
+        )
+        ON CONFLICT (account_id, token_id)
+        DO UPDATE SET
+            holdings_value = EXCLUDED.holdings_value,
+            first_bought = CASE 
+                WHEN token_balance.first_bought IS NULL THEN NOW()
+                ELSE token_balance.first_bought
+            END
+        "#,
+        event.to,
+        event.token_id,
+        to_balance_bd
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    // Update holder count in cult_token
+    // We need to check if:
+    // 1. Sender's balance went to 0 (decrement count)
+    // 2. Receiver's balance went from 0 to >0 (increment count)
+    sqlx::query!(
+        r#"
+        WITH balance_changes AS (
+            SELECT 
+                -- Check if sender is losing all tokens
+                (SELECT holdings_value = 0 FROM token_balance 
+                 WHERE account_id = $1 AND token_id = $2) AS sender_empty,
+                
+                -- Check if receiver is getting first tokens
+                (SELECT holdings_value > 0 FROM token_balance 
+                 WHERE account_id = $3 AND token_id = $2) AS receiver_had_tokens
+        )
+        UPDATE cult_token
+        SET
+            holder_count = holder_count + 
+                          CASE 
+                              WHEN (SELECT sender_empty FROM balance_changes) AND 
+                                   (SELECT NOT receiver_had_tokens FROM balance_changes) 
+                              THEN -1
+                              WHEN (SELECT NOT sender_empty FROM balance_changes) AND 
+                                   (SELECT NOT receiver_had_tokens FROM balance_changes) 
+                              THEN 1
+                              WHEN (SELECT sender_empty FROM balance_changes) AND 
+                                   (SELECT receiver_had_tokens FROM balance_changes) 
+                              THEN 0
+                              ELSE 0
+                          END
+        WHERE id = $2
+        "#,
+        event.from,
+        event.token_id,
+        event.to
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn handle_cult_token_fees(
+    event: CultTokenFeesEvent,
+    tx: &mut sqlx::Transaction<'_, Postgres>
+) -> Result<(), anyhow::Error> {
+    println!("CultTokenFees: {}", event.order_referrer);
+
+    let fee_bd = BigDecimal::from_str(&event.order_referrer_fee.to_string())?;
+
+    // Get existing account
+    let existing_account = sqlx::query!(
+        r#"
+        SELECT 
+            slug,
+            referrer_id,
+            total_referrals,
+            fee_collected,
+            diamond_hand_probability
+        FROM account 
+        WHERE id = $1
+        "#,
+        event.order_referrer
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    // Update or create account with accumulated fees
+    sqlx::query!(
+        r#"
+        INSERT INTO account (
+            id,
+            slug,
+            referrer_id,
+            total_referrals,
+            fee_collected,
+            diamond_hand_probability
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (id) DO UPDATE SET
+            fee_collected = COALESCE(account.fee_collected, 0) + $5::numeric,
+            total_referrals = COALESCE(account.total_referrals, 0) + 1,
+            slug = COALESCE(account.slug, $2),
+            diamond_hand_probability = COALESCE(account.diamond_hand_probability, $6)
+        "#,
+        event.order_referrer,
+        existing_account.as_ref().and_then(|a| a.slug.clone())
+            .unwrap_or_else(|| "Order Referrer Fees".to_string()),
+        existing_account.as_ref().and_then(|a| a.referrer_id.clone()),
+        existing_account.as_ref().map(|a| a.total_referrals.unwrap_or(0) + 1).unwrap_or(1),
+        fee_bd,
+        existing_account.as_ref().map(|a| a.diamond_hand_probability).unwrap_or(0)
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+async fn update_token_balance(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    token_id: &str,
+    account_id: &str,
+    new_value: u128,
+    timestamp: u64
+) -> Result<(), anyhow::Error> {
+    println!("UPDATING TOKEN BALANCE");
+
+    let current_timestamp = Utc.timestamp_opt(timestamp as i64, 0).unwrap();
+    let zero_decimal = BigDecimal::from_str("0").unwrap();
+
+    // Get existing balance
+    let existing = sqlx::query!(
+        r#"
+        SELECT holdings_value, first_bought FROM token_balance 
+        WHERE account_id = $1 AND token_id = $2
+        "#,
+        account_id,
+        token_id
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    let old_value = existing.map(|b| b.holdings_value).unwrap_or(zero_decimal.clone());
+
+    // Insert or update balance - Using composite key for ON CONFLICT
+    sqlx::query!(
+        r#"
+        INSERT INTO token_balance (
+            token_id,
+            account_id,
+            holdings_value,
+            first_bought,
+            holding_duration,
+            pnl,
+            duration_z,
+            pnl_z,
+            value_z
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (account_id, token_id) DO UPDATE SET
+            holdings_value = $3,
+            holding_duration = EXTRACT(EPOCH FROM (NOW() - token_balance.first_bought))::bigint
+        "#,
+        token_id,
+        account_id,
+        BigDecimal::from(new_value),
+        current_timestamp,
+        0i64.into(),  // holding_duration
+        Some(BigDecimal::from(0)),  // pnl
+        Some(BigDecimal::from_str("0.0").unwrap()),  // duration_z
+        Some(BigDecimal::from_str("0.0").unwrap()),  // pnl_z
+        Some(BigDecimal::from_str("0.0").unwrap())   // value_z
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    // Update holder count
+    if (old_value == zero_decimal && new_value > 0) || (old_value > zero_decimal && new_value == 0) {
+        sqlx::query!(
+            r#"
+            UPDATE cult_token
+            SET holder_count = (
+                SELECT COUNT(DISTINCT account_id)
+                FROM token_balance
+                WHERE token_id = $1 AND holdings_value > 0
+            )
+            WHERE id = $1
+            "#,
+            token_id
+        )
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    Ok(())
+}
 
 fn deserialize_u128_from_str<'de, D>(deserializer: D) -> Result<u128, D::Error>
-where
-    D: Deserializer<'de>,
+    where D: Deserializer<'de>
 {
     let s = String::deserialize(deserializer)?;
     u128::from_str(&s).map_err(de::Error::custom)
@@ -887,56 +859,75 @@ pub struct CultTokenCreatedEvent {
     pub block_timestamp: u64,
     pub transaction_hash: String,
     pub chain_id: String,
+    pub merkle_roots: Vec<String>,      
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub total_amount: u128,         
+    pub total_airdrop_recipient_count: u32,
 }
 
 #[derive(Debug, serde::Deserialize)]
 pub struct CultTokenBuyEvent {
-    pub trader_id: String,             
-    pub recipient_id: String,          
-    pub order_referrer: String,       
-    #[serde(deserialize_with = "deserialize_u128_from_str")] 
-    pub total_eth: u128,               
+    pub trader_id: String,
+    pub recipient_id: String,
+    pub order_referrer: String,
     #[serde(deserialize_with = "deserialize_u128_from_str")]
-    pub eth_fee: u128,                 
+    pub total_eth: u128,
     #[serde(deserialize_with = "deserialize_u128_from_str")]
-    pub eth_sold: u128,                
+    pub eth_fee: u128,
     #[serde(deserialize_with = "deserialize_u128_from_str")]
-    pub tokens_bought: u128,           
+    pub eth_sold: u128,
     #[serde(deserialize_with = "deserialize_u128_from_str")]
-    pub buyer_token_balance: u128,     
+    pub tokens_bought: u128,
     #[serde(deserialize_with = "deserialize_u128_from_str")]
-    pub total_supply: u128,            
-    pub market_type: u8,               
-    pub block_timestamp: u64,          
-    pub block_number: u64,             
-    pub transaction_hash: String,      
-    pub token_id: String,              
-    pub chain_id: u64                  
+    pub buyer_token_balance: u128,
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub total_supply: u128,
+    pub market_type: u8,
+    pub block_timestamp: u64,
+    pub block_number: u64,
+    pub transaction_hash: String,
+    pub token_id: String,
+    pub chain_id: u64,
 }
-#[derive(serde::Deserialize)]
+
+#[derive(Debug, serde::Deserialize)]
 pub struct CultTokenSellEvent {
     pub seller: String,
     pub recipient: String,
     pub order_referrer: String,
-    pub total_eth: i64,
-    pub eth_fee: i64,
-    pub eth_bought: i64,
-    pub tokens_sold: i64,
-    pub seller_token_balance: i64,
-    pub total_supply: i64,
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub total_eth: u128,
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub eth_fee: u128,
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub eth_bought: u128,
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub tokens_sold: u128,
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub seller_token_balance: u128,
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub total_supply: u128,
     pub market_type: u8,
     pub block_timestamp: u64,
+    pub block_number: u64,
+    pub log_index: u64,
+    pub chain_id: u64,
     pub transaction_hash: String,
+    pub token_id: String,
 }
 
+// Update CultTokenTransferEvent struct to include token_id
 #[derive(serde::Deserialize)]
 pub struct CultTokenTransferEvent {
     pub from: String,
     pub to: String,
-    pub from_token_balance: i64,
-    pub to_token_balance: i64,
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub from_token_balance: u128,
+    #[serde(deserialize_with = "deserialize_u128_from_str")]
+    pub to_token_balance: u128,
     pub block_timestamp: u64,
     pub transaction_hash: String,
+    pub token_id: String,
 }
 
 #[derive(serde::Deserialize)]

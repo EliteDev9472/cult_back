@@ -378,19 +378,7 @@ pub async fn get_all_communities(pool: web::Data<PgPool>) -> impl Responder {
     }
 }
 
-pub async fn handle_cult_token_created(
-    event: CultTokenCreatedEvent,
-    pool: &Pool<Postgres>,
-) -> Result<(), anyhow::Error> {
-    Ok(())
-}
 
-pub async fn handle_cult_token_buy(
-    event: CultTokenBuyEvent,
-    pool: &Pool<Postgres>,
-) -> Result<(), anyhow::Error> {
-    Ok(())
-}
 #[derive(serde::Deserialize)]
 pub struct CultTokenCreatedEvent {
     pub token_address: String,

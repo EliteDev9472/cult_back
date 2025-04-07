@@ -18,15 +18,17 @@ pub async fn create_community(
     img_url: &str,
     address: &str,
     chain: &str,
+    holder_count:u32,
     merkle_root: Option<&Vec<u8>>,
     merkle_proofs: Option<&serde_json::Value>,
     last_updated: Option<DateTime<Utc>>,
+    
 ) -> Result<Community> {
     let community = sqlx::query_as!(
         Community,
         r#"
-        INSERT INTO communities (id, name, img_url, address, chain, merkle_root, merkle_proofs, last_updated_time)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO communities (id, name, img_url, address, chain, merkle_root, merkle_proofs, last_updated_time, holder_count)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *
         "#,
         address.clone(),
@@ -36,7 +38,8 @@ pub async fn create_community(
         chain,
         merkle_root,
         merkle_proofs,
-        last_updated
+        last_updated,
+        holder_count as i32
     )
     .fetch_one(&mut **tx)
     .await?;
@@ -50,6 +53,7 @@ pub async fn update_community(
     merkle_root: Option<&Vec<u8>>,
     merkle_proofs: Option<&serde_json::Value>,
     last_updated: Option<DateTime<Utc>>,
+    holder_count:i32
 ) -> Result<Community> {
     let community = sqlx::query_as!(
         Community,
@@ -58,17 +62,20 @@ pub async fn update_community(
         SET 
             merkle_root = COALESCE($1, merkle_root),
             merkle_proofs = COALESCE($2, merkle_proofs),
-            last_updated_time = $3
+            last_updated_time = $3,
+            holder_count = $5
         WHERE address = $4
         RETURNING *
         "#,
         merkle_root,
         merkle_proofs,
         last_updated,
-        address
+        address,
+        holder_count
     )
     .fetch_one(&mut **tx)
     .await?;
+    
 
     Ok(community)
 }
