@@ -859,7 +859,8 @@ pub async fn handle_token_claimed(
     sqlx::query!(
         r#"
         update token_balance
-        set holdings_value = holdings_value + $1
+        set holdings_value = holdings_value + $1,
+        first_bought = CURRENT_TIMESTAMP
         where account_id = $2 and token_id = $3
         "#,
         amount,
