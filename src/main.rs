@@ -156,6 +156,38 @@ impl EventProcessor {
                             }
                         }
                     }
+                    models::WebhookEventType::TokenClaimed => {
+                        println!("Processing TokenClaimed event");
+                        match serde_json::from_value::<handlers::TokensClaimedEvent>(
+                            payload.data,
+                        ) {
+                            Ok(event) => {
+                                // Pass mutable borrow of tx, handler returns Result
+                                handlers::handle_token_claimed(event, &mut tx).await
+                            }
+                            Err(e) => {
+                                println!("Failed to deserialize TokensClaimedEvent: {}", e);
+                                // Treat deserialization error as a processing failure
+                                Err(anyhow::anyhow!("Deserialization failed: {}", e))
+                            }
+                        }
+                    }
+                    models::WebhookEventType::CultMarketGraduated => {
+                        println!("Processing CultMarketGraduated event");
+                        match serde_json::from_value::<handlers::CultMarketGraduatedEvent>(
+                            payload.data,
+                        ) {
+                            Ok(event) => {
+                                // Pass mutable borrow of tx, handler returns Result
+                                handlers::handle_cult_market_graduated(event, &mut tx).await
+                            }
+                            Err(e) => {
+                                println!("Failed to deserialize CultMarketGraduatedEvent: {}", e);
+                                // Treat deserialization error as a processing failure
+                                Err(anyhow::anyhow!("Deserialization failed: {}", e))
+                            }
+                        }
+                    }
                 };
 
                 // Commit or rollback the transaction
