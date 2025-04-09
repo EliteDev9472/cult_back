@@ -1,11 +1,42 @@
-use alloy::primitives::U256;
+//use alloy::primitives::u128;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
-use uuid::Uuid;
 use bigdecimal::BigDecimal;
-use std::str::FromStr;
-use sqlx::Type;
+use utoipa::{OpenApi, ToSchema};
+
+//////////////
+// WEBHOOKS //
+//////////////
+#[derive(Clone)]
+pub struct WebhookConfig {
+    pub secret_key: String,
+    pub max_concurrent_jobs: usize,
+    pub job_queue_buffer: usize,
+}
+
+// Webhook payload structures
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum WebhookEventType {
+    CultTokenCreated,
+    CultTokenBuy,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WebhookPayload {
+    pub id: String,
+    pub event_type: WebhookEventType,
+    pub data: serde_json::Value,
+    pub timestamp: i64,
+}
+
+// Response for webhook receipt
+#[derive(Serialize)]
+pub struct WebhookResponse {
+    pub status: String,
+    pub event_id: String,
+}
+
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct CultToken {
@@ -34,7 +65,7 @@ pub enum TradeType {
     Sell,
 }
 
-#[derive(Debug, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct Account {
     pub id: Option<String>, // Changed to String for address
     pub slug: Option<String>,
@@ -42,9 +73,11 @@ pub struct Account {
     pub diamond_hand_probability: u32,
     pub referrer_id: Option<String>, // Reference to another Account (foreign key)
     pub total_referrals: Option<u32>,
-    pub fee_collected: U256,
+    pub fee_collected: u128,
     pub twitter: Option<String>,
     pub discord: Option<String>,
+    pub tokens_created: u32,
+    pub tokens_migrated: u32
 }
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
@@ -87,45 +120,49 @@ struct TokenMetrics {
     mean_value: f64,
     stddev_value: f64,
 }
-// Configuration struct for webhook settings
-#[derive(Clone)]
-pub struct WebhookConfig {
-    pub secret_key: String,
-    pub max_concurrent_jobs: usize,
-    pub job_queue_buffer: usize,
-}
-
-// Webhook payload structures
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum WebhookEventType {
-    CultTokenCreated,
-    CultTokenBuy,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct WebhookPayload {
-    pub id: String,
-    pub event_type: WebhookEventType,
-    pub data: serde_json::Value,
-    pub timestamp: i64,
-}
-
-// Response for webhook receipt
-#[derive(Serialize)]
-pub struct WebhookResponse {
-    pub status: String,
-    pub event_id: String,
-}
 
 
-
-//////// new response & params structs
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, utoipa::IntoParams)]
 pub struct PaginationParams {
     pub offset: i64,
     pub limit: i64,
 }
 
+#[derive(Deserialize, ToSchema)]
+pub struct CreateAccountRequest {
+    pub user_id: String,
+    pub referral_code: Option<String>,
+    pub twitter: Option<String>,
+    pub discord: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct CreateAccountResponse {
+    pub user_id: String,
+    pub referral_code: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct WatchlistActionRequest {
+    pub account_id: String,
+    pub cult_token_id: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateAccountRequest {
+    pub twitter: Option<String>,
+    pub discord: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CommunityResponse {
+    pub name: String,
+    pub img_url: String,
+    pub chain: String,
+    pub merkle_root: String,
+    pub holder_count: i64,
+    pub community_score: Option<f32>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct TopHolderParams {
@@ -133,14 +170,24 @@ pub struct TopHolderParams {
     pub offset: i64,
     pub limit: i64,
 }
-
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct CultTokensResponse {
     pub token_address: String,
     pub token_creator: String,
     pub name: String,
     pub symbol: String,
-    pub ipfsData: String,
+    pub ipfs_data: String,
+    pub holder_count: u32,
+    pub market_cap: f64,
+    pub volume: f64,
+    pub total_airdrop_recipient_count: u32,
+    pub creator_holdings: f64,
+    pub top_holders: f64,
+    pub buy_tx_count_1h: u32,
+    pub sell_tx_count_1h: u32,
+    #[schema(value_type = Option<String>, example = "2023-01-01T00:00:00Z")]
+    pub last_traded: Option<DateTime<Utc>>,  // Changed to Option
+    pub bonding_curve_percentage: f64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -151,20 +198,27 @@ pub struct CultTokenTopHolders {
 
 
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct CultTokensDataResponse {
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CultTokenDataResponse {
     pub id: String,
     pub token_creator: String,
-    pub bonding_curve: String,
     pub name: String,
     pub symbol: String,
-    pub pool_address: String,
-    pub block_timestamp: DateTime<Utc>,
-    pub holder_count: i64,
-    pub airdrop_contract: String,
     pub ipfs_content: String,
+    pub holder_count: u32,
+    pub market_cap: f64,
+    pub volume: f64,
+    pub total_airdrop_recipient_count: u32,
+    pub creator_holdings: f64,
+    pub top_holders: f64,
+    pub buy_tx_count_1h: u32,
+    pub sell_tx_count_1h: u32,
+    #[schema(value_type = Option<String>, example = "2023-01-01T00:00:00Z")]
+    pub last_traded: Option<DateTime<Utc>>, 
+    pub bonding_curve_percentage: f64,
+    pub is_graduated: bool,
+    pub pool_address: String,
 }
-
 
 #[derive(Debug, Deserialize, Serialize, FromRow)]
 pub struct TokenTradesResponse {
@@ -189,3 +243,44 @@ pub struct AccountDetailResponse {
     pub feeCollected: Option<BigDecimal>,
 }
 
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AccountData {
+   pub created_tokens: Vec<CreatedToken>,
+   pub owned_tokens: Vec<OwnedToken>,
+   pub watchlist: Vec<WatchlistToken>,
+   pub communities: Vec<Community>,
+}
+
+#[derive(Debug, Serialize, Deserialize,ToSchema)]
+pub struct CreatedToken {
+   pub id: String,
+   pub name: String,
+   pub symbol: String,
+   pub ipfs_content: String,
+   pub user_balance: String,  // Wei as string
+}
+
+#[derive(Debug, Serialize, Deserialize,ToSchema)]
+pub struct OwnedToken {
+   pub id: String,
+   pub name: String,
+   pub symbol: String,
+   pub ipfs_content: String,
+   pub user_balance: String,  // Wei as string
+}
+
+#[derive(Debug, Serialize, Deserialize,ToSchema)]
+pub struct WatchlistToken {
+   pub id: String,
+   pub name: String,
+   pub symbol: String,
+   pub ipfs_content: String,
+   pub user_balance: String,  // Wei as string
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct Community {
+   pub id: String,
+   pub name: String,
+   pub img_url: String,
+}

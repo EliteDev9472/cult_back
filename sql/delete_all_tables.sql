@@ -12,4 +12,7 @@ DROP TABLE IF EXISTS token_stats CASCADE;
 DROP TABLE IF EXISTS diamond_hand_list CASCADE;
 DROP TABLE IF EXISTS account_watchlist CASCADE;
 DROP TABLE IF EXISTS token_ohlcv CASCADE;
+DROP TABLE IF EXISTS token_airdrops CASCADE;
+DROP TABLE IF EXISTS airdrop_recipients CASCADE;
+DROP TABLE IF EXISTS crypto_latest_prices CASCADE;
 

@@ -1,10 +1,9 @@
 use anyhow::Ok;
 use anyhow::Result; 
-use serde_json::Value;
-use sqlx::{Transaction, Postgres, Executor}; 
+
+use sqlx::{Transaction, Postgres}; 
 use reqwest;
 use chrono::{DateTime, TimeZone, Utc}; // For handling timestamps
-use crate::models::{ Account, CultToken, TokenBalance, TokenTrade, TradeType };
 use sqlx::types::BigDecimal;
 use std::str::FromStr;                  // for parsing string -> BigDecimal
 use serde::Deserialize;
@@ -102,21 +101,24 @@ let total_amount = BigDecimal::from_str(&event.total_amount.to_string())?;
 
    // Numeric types - Using f64 here, consider BigDecimal if precision is paramount
    // and change DB columns to NUMERIC
-   let price_db: f64 = 1_200_000_000_000.0;
-   let market_cap_db: f64 = 6000.0;
-   let circulating_supply_db: f64 = 0.0;
+   let price_db: f64 = 1_200_000_000_000.0; //based on A value in bonding vurve
+   let market_cap_db: f64 = 6000.0; // based on
    let total_fee_db: f64 = 0.0;
    let volume_db: f64 = 0.0;
 
+   let top_holders = &total_amount/BigDecimal::from_str("10_000_000_000")?; // airdropped_amount / total supply
+ let bonding_curve_percentage = 0.0;
     // Insert the cult token
     sqlx::query(
         r#"
         INSERT INTO cult_token (
             id, factory_address, token_creator, protocol_fee_recipient, bonding_curve,
             token_uri, name, symbol, pool_address, block_number,
-            block_timestamp, transaction_hash, holder_count, airdrop_contract, ipfs_content, chain, price, market_cap, circulating_supply, total_fee, volume,total_airdrop_recipient_count,total_amount
+            block_timestamp, transaction_hash, holder_count, airdrop_contract, ipfs_content, chain, 
+            price, market_cap, circulating_supply, total_fee, volume,total_airdrop_recipient_count,total_amount,
+top_holders,bonding_curve_percentage
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
         "#
     )
     .bind(&event.token_address)
@@ -131,22 +133,27 @@ let total_amount = BigDecimal::from_str(&event.total_amount.to_string())?;
     .bind(block_number_db) // Use the converted block_number
     .bind(block_timestamp_db) // Use the converted block_timestamp
     .bind(&event.transaction_hash)
-    .bind(0i64)
+    .bind(total_airdrop_recipient_count_db) //initial holder count
     .bind(&event.airdrop_contract)
     .bind(ipfs_content) 
-    .bind(&event.chain_id) //chain -
+    .bind("10143") //chain -
     .bind(price_db) //price - assuming 0 for now (starting bonding curve price)
     .bind(market_cap_db) //market_cap - assuming 0 for now
-    .bind(circulating_supply_db) //circulating_supply -needs to change based on airdrop contract
+    .bind(&total_amount) //circulating_supply currently based on airdrop amount
     .bind(total_fee_db)
     .bind(volume_db)
     .bind(total_airdrop_recipient_count_db)
-    .bind(&total_amount) //total_fee - assuming 0 for now
+    .bind(&total_amount)
+    
+    .bind(&top_holders)
+    .bind(&bonding_curve_percentage)
+     //total_fee - assuming 0 for now
     .execute(&mut **tx).await?;
 
     // Create accounts
     create_account(&mut *tx, &event.pool_address, Some("POOL"), None).await?;
-    create_account(&mut *tx, &event.token_creator, Some("CREATOR"), None).await?;
+    // not needed as creators will always have account for now
+    //create_account(&mut *tx, &event.token_creator, Some("CREATOR"), None).await?;
     create_account(&mut *tx, &event.airdrop_contract, Some("AIRDROP"), None).await?;
 
     // Initialize token_stats
@@ -278,8 +285,9 @@ pub async fn handle_cult_token_buy(
     let total_supply_bd = BigDecimal::from_str(&event.total_supply.to_string())?;
 
     // Create accounts if they don't exist
-    create_account(&mut *tx, &event.trader_id, None, None).await?;
-    create_account(&mut *tx, &event.order_referrer, None, None).await?;
+    //atm only existing traders can trade on our platform so commenting this
+    //create_account(&mut *tx, &event.trader_id, None, None).await?;
+    //create_account(&mut *tx, &event.order_referrer, None, None).await?;
 
     // 1) Insert trade record
     sqlx::query!(
@@ -422,9 +430,10 @@ pub async fn handle_cult_token_sell(
     let total_supply_bd = BigDecimal::from_str(&event.total_supply.to_string())?;
 
     // Create accounts if they don't exist
-    create_account(&mut *tx, &event.seller, None, None).await?;
-    create_account(&mut *tx, &event.recipient, None, None).await?;
-    create_account(&mut *tx, &event.order_referrer, None, None).await?;
+    //atm only existing traders can trade on our platform so commenting this
+    //create_account(&mut *tx, &event.seller, None, None).await?;
+    //create_account(&mut *tx, &event.recipient, None, None).await?;
+    //create_account(&mut *tx, &event.order_referrer, None, None).await?;
 
     // Insert trade record
     sqlx::query!(
@@ -568,8 +577,9 @@ pub async fn handle_cult_token_transfer(
     }
 
     // Create accounts if they don't exist
-    create_account(&mut *tx, &event.from, None, None).await?;
-    create_account(&mut *tx, &event.to, None, None).await?;
+  //atm only existing traders can trade on our platform so commenting this  
+    //create_account(&mut *tx, &event.from, None, None).await?;
+    //create_account(&mut *tx, &event.to, None, None).await?;
 
     // Convert balances to BigDecimal
     let from_balance_bd = BigDecimal::from_str(&event.from_token_balance.to_string())?;

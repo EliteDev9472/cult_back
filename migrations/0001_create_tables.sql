@@ -22,7 +22,18 @@ CREATE TABLE cult_token (
     total_fee NUMERIC NOT NULL,
     volume NUMERIC NOT NULL,
     total_airdrop_recipient_count BIGINT NOT NULL,
-    total_amount NUMERIC NOT NULL
+    total_amount NUMERIC NOT NULL,
+    last_traded TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    creator_holdings NUMERIC(5,4) DEFAULT 0 NOT NULL,
+    top_holders NUMERIC(5,4) NOT NULL,
+    lpPositionId BIGINT DEFAULT 0,
+    is_graduated BOOLEAN DEFAULT FALSE  NOT NULL,
+    bonding_curve_percentage NUMERIC(5, 2) NOT NULL,  
+
+
+    total_tx_count_1h INTEGER DEFAULT 0  NOT NULL,  
+    buy_tx_count_1h INTEGER DEFAULT 0  NOT NULL,    
+    sell_tx_count_1h INTEGER DEFAULT 0   NOT NULL 
 );
 
 -- Communities Table (unchanged)
@@ -32,10 +43,11 @@ CREATE TABLE communities (
     img_url TEXT NOT NULL,
     address TEXT NOT NULL UNIQUE,
     chain TEXT NOT NULL,
-    merkle_root BYTEA, 
+    merkle_root BYTEA NOT NULL, 
     last_updated_time TIMESTAMPTZ, 
-    merkle_proofs JSONB,
-    holder_count INTEGER NOT NULL
+    merkle_proofs JSONB NOT NULL,
+    holder_count BIGINT NOT NULL,
+    community_score NUMERIC(5,2)
 );
 
 
@@ -49,9 +61,10 @@ CREATE TABLE account (
     total_referrals INT CHECK (total_referrals >= 0), -- Ensure non-negative
     fee_collected NUMERIC NOT NULL, -- Store large U256 values safely
     twitter TEXT,
-    discord TEXT
+    discord TEXT,
+    tokens_created INTEGER DEFAULT 0,
+    tokens_migrated INTEGER DEFAULT 0
 );
-
 
 -- 2. Create the corrected token_airdrops table
 CREATE TABLE token_airdrops (
@@ -71,6 +84,14 @@ CREATE TABLE airdrop_recipients (
     account_id TEXT REFERENCES account(id),
     token_airdrop_id INTEGER REFERENCES token_airdrops(id),
     PRIMARY KEY (account_id, token_airdrop_id)
+);
+
+CREATE TABLE crypto_latest_prices (
+    symbol VARCHAR(10) PRIMARY KEY,    -- The cryptocurrency symbol, acts as the unique key
+    price DECIMAL(20, 10) NOT NULL,   -- The latest price
+    change_24h DECIMAL(12, 8) NOT NULL, -- The latest 24h change
+    change_1h DECIMAL(12, 8) NOT NULL,  -- The latest 1h change
+    last_updated_at TIMESTAMP NOT NULL 
 );
 
 CREATE INDEX idx_airdrop_recipients_account ON airdrop_recipients(account_id);
@@ -116,6 +137,7 @@ CREATE TABLE token_balance (
     volume NUMERIC NOT NULL,
     holding_duration BIGINT,
     pnl NUMERIC NOT NULL,
+    unrealised_pnl NUMERIC,
     holdings_value NUMERIC NOT NULL,
     duration_z NUMERIC,
     pnl_z NUMERIC,

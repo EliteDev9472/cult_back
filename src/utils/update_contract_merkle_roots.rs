@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 pub async fn update_contract_merkle_roots(
     merkle_roots: Vec<String>,
-    holder_counts: Vec<u32>,
+    holder_counts: Vec<i64>,
 ) -> Result<String, anyhow::Error>  {
     // Validate input lengths match
     if merkle_roots.len() != holder_counts.len() {
@@ -75,9 +75,10 @@ pub async fn update_contract_merkle_roots(
     let tx_hash = contract
         .function("updateMerkleRoots", &[DynSolValue::Array(roots), DynSolValue::Array(counts)])?
         .send()
-        .await?
-        .watch()
         .await?;
+    //add below to wait for transaction confirmation commenting it saves 16 seconds or 8 sec per call
+        //.watch()
+        //.await?;
 
    Ok(format!("{:?}", tx_hash))
 

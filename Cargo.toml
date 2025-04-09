@@ -34,4 +34,9 @@ rand = "0.9.0"
 ordered-float = "5.0.0"
 regex = "1.10.3"
 bigdecimal = { version = "0.4", features = ["serde"] }
+utoipa = "5.3.1"              # check for the latest version
+utoipa-swagger-ui = { version = "9", features = ["actix-web"] }    # optional, for a Swagger UI
+num-traits = "0.2"
 
+[env]
+SQLX_OFFLINE = "true"

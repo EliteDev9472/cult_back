@@ -1,6 +1,6 @@
-use alloy::{primitives::{Address, B256, U256}, rlp::Encodable};
+use alloy::primitives::{Address, B256, U256};
 use alloy_merkle_tree::tree::MerkleTree;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use dotenv::dotenv;
 //use reqwest::Error;
 use serde::Deserialize;
@@ -15,7 +15,7 @@ use serde_json::from_reader;
 use sqlx::PgPool;
 use crate::community_airdrops::handler;
 use sqlx::FromRow;
-use std::time::{Instant}; //to measure time for certain operations
+
 //use cult_backend::auth::middleware::ApiGuard;
 //use cult_backend::config::Settings;
 use crate::utils::update_contract_merkle_roots::update_contract_merkle_roots;
@@ -30,8 +30,8 @@ pub struct Community {
     pub merkle_root: Option<Vec<u8>>, // Merkle root (calculated later)
     pub last_updated_time: Option<chrono::DateTime<Utc>>, // Last updated timestamp
     pub merkle_proofs: Option<serde_json::Value>, // Address -> Merkle proofs
-
-    pub holder_count: i32
+    pub holder_count: i64,
+    pub community_score: Option<f64>,
 }
 #[derive(Debug, Deserialize)]
 pub struct NftOwnersResponse {
@@ -70,10 +70,11 @@ impl Community {
             img_url,
             address,
             chain,
-            holder_count:0,
+            holder_count:0 as i64,
             merkle_root: None,
             last_updated_time: None,
             merkle_proofs: None,
+            community_score:None
         })
     }
 
@@ -143,7 +144,7 @@ pub async fn fetch_nft_holders(
     Ok(owners)
 }
 /// Invalidates all old merkle roots in the contract
-async fn invalidate_old_roots(pool: &PgPool) ->Result<(), anyhow::Error>  {
+async fn invalidate_old_roots(pool: &PgPool) -> Result<(), anyhow::Error> {
     println!("Invalidating all existing merkle roots in contract");
 
     let existing_communities = sqlx::query!(
@@ -152,25 +153,28 @@ async fn invalidate_old_roots(pool: &PgPool) ->Result<(), anyhow::Error>  {
     .fetch_all(pool)
     .await?;
 
+    if existing_communities.is_empty() {
+return Ok(());
+    }
+
     let batch: Vec<_> = existing_communities
-        .into_iter()
-        .filter_map(|c| c.merkle_root.map(|r| (r, 0)))
-        .collect();
+    .into_iter()
+    .map(|c| (c.merkle_root, 0))
+    .collect();
 
     if !batch.is_empty() {
         let (roots, counts): (Vec<_>, Vec<_>) = batch
             .into_iter()
-            .map(|(root, _)| (format!("0x{}", hex::encode(root)), 0u32))
+            .map(|(root, _)| (format!("0x{}", hex::encode(root)), 0i64))
             .unzip();
 
-        let _ = update_contract_merkle_roots(roots, counts)
-            .await?;
+        update_contract_merkle_roots(roots, counts).await?;
     }
 
     Ok(())
 }
 
-async fn update_new_roots(roots_and_counts: Vec<(Vec<u8>, u32)>) -> Result<()> {
+async fn update_new_roots(roots_and_counts: Vec<(Vec<u8>, i64)>) -> Result<()> {
     println!("Updating contract with new merkle roots");
 
     if !roots_and_counts.is_empty() {
@@ -200,7 +204,7 @@ pub async fn update_all_communities(pool: &PgPool, api_key: &str) -> Result<(), 
     
     // Store roots and counts for batch update
     let mut new_roots_and_counts = Vec::new();
-
+    
     for (config, owners) in configs.into_iter().zip(holders) {
         let mut tx: sqlx::Transaction<'_, sqlx::Postgres> = pool.begin().await?;
 
@@ -229,11 +233,12 @@ pub async fn update_all_communities(pool: &PgPool, api_key: &str) -> Result<(), 
                 Ok::<_, anyhow::Error>((community.merkle_root, community.merkle_proofs))
             }).await??
         };
-        let holder_count = owners.len() as i32;
+        let holder_count = owners.len() as i64;
 
         if let Some(root) = &merkle_data.0 {
-            new_roots_and_counts.push((root.clone(), holder_count as u32));
+            new_roots_and_counts.push((root.clone(), holder_count));
         }
+        println!("CHECKPOINT1");
 
         // Update or create community in database
         match existing {
@@ -251,7 +256,7 @@ pub async fn update_all_communities(pool: &PgPool, api_key: &str) -> Result<(), 
                 &config.img_url,
                 &config.address,
                 &config.chain,
-                holder_count as u32,
+                holder_count,
                 merkle_data.0.as_ref(),
                 merkle_data.1.as_ref(),
                 Some(Utc::now())

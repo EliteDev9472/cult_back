@@ -18,7 +18,7 @@ pub async fn create_community(
     img_url: &str,
     address: &str,
     chain: &str,
-    holder_count:u32,
+    holder_count:i64,
     merkle_root: Option<&Vec<u8>>,
     merkle_proofs: Option<&serde_json::Value>,
     last_updated: Option<DateTime<Utc>>,
@@ -29,7 +29,8 @@ pub async fn create_community(
         r#"
         INSERT INTO communities (id, name, img_url, address, chain, merkle_root, merkle_proofs, last_updated_time, holder_count)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING *
+                           RETURNING id, name, img_url, address, chain, merkle_root, merkle_proofs, last_updated_time, holder_count, 
+                community_score as "community_score: _"
         "#,
         address.clone(),
         name,
@@ -39,7 +40,7 @@ pub async fn create_community(
         merkle_root,
         merkle_proofs,
         last_updated,
-        holder_count as i32
+        holder_count
     )
     .fetch_one(&mut **tx)
     .await?;
@@ -53,7 +54,7 @@ pub async fn update_community(
     merkle_root: Option<&Vec<u8>>,
     merkle_proofs: Option<&serde_json::Value>,
     last_updated: Option<DateTime<Utc>>,
-    holder_count:i32
+    holder_count:i64
 ) -> Result<Community> {
     let community = sqlx::query_as!(
         Community,
@@ -65,7 +66,8 @@ pub async fn update_community(
             last_updated_time = $3,
             holder_count = $5
         WHERE address = $4
-        RETURNING *
+                             RETURNING id, name, img_url, address, chain, merkle_root, merkle_proofs, last_updated_time, holder_count,
+                community_score as "community_score: _"
         "#,
         merkle_root,
         merkle_proofs,
@@ -79,6 +81,8 @@ pub async fn update_community(
 
     Ok(community)
 }
+
+
 pub async fn delete_community(pool: &PgPool, address: &str) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 

@@ -1,22 +1,15 @@
-use actix_service::Service;
 use actix_web::{
-    dev::ServiceRequest,
-    error::ErrorUnauthorized,
     guard,
     middleware::{Logger, NormalizePath},
-    web, App, HttpRequest, HttpResponse, HttpServer, Responder,
+    web, App, HttpResponse, HttpServer, Responder,
 };
 use anyhow::Result;
 use dotenv::dotenv;
-use futures::future::{ok, Either};
-use hmac::{Hmac, Mac};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::Sha256;
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
+use utoipa::OpenApi;
 use std::{env, sync::Arc, time::Duration};
-use uuid::Uuid;
-
+use utoipa_swagger_ui::SwaggerUi;
 // Async job queue for processing events
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
@@ -217,7 +210,8 @@ async fn webhook_handler(
     }
 }
 
-#[tokio::main]
+
+#[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Load environment variables
     dotenv().ok();
@@ -231,7 +225,7 @@ async fn main() -> std::io::Result<()> {
 
     // Database connection pool
     let pool = PgPoolOptions::new()
-        .max_connections(20)
+        .max_connections(50)
         .acquire_timeout(Duration::from_secs(10))
         .connect(&database_url)
         .await
@@ -264,31 +258,42 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
-            .wrap(NormalizePath::trim())
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(webhook_config.clone()))
             .app_data(web::Data::new(sender.clone()))
             .app_data(web::Data::new(webhook_event_sender.clone()))  
             .service(
-                web::scope("/api")
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-doc/openapi.json", routes::ApiDoc::openapi())
+            )
+            .service(
+                web::scope("/api").wrap(NormalizePath::trim())
                     //.wrap(ApiGuard::new())
                     // New API routes
                     // .service(web::resource("/tokens").route(web::get().to(routes::get_tokens)))
                     // .service(web::resource("/tokens/{token_id}").route(web::get().to(routes::get_token)))
                     // .service(web::resource("/tokens/{token_id}/trades").route(web::get().to(routes::get_token_trades)))
-                    .service(web::resource("/profile/{user_id}").route(web::get().to(routes::get_profile)))
-                    .service(web::resource("/profileData/{user_id}").route(web::get().to(routes::get_profile_data)))
-                  //  .service(web::resource("/profile/{user_id}").route(web::put().to(routes::update_profile)))
-                    .service(web::resource("/diamond_hands").route(web::get().to(routes::get_diamond_hands)))
-                    .service(web::resource("/cult_tokens/{offset}/{limit}").route(web::get().to(routes::get_cult_tokens)))
-                    .service(web::resource("/top_coins").route(web::get().to(routes::get_top_coins)))
-                    .service(web::resource("/cult_token/{token_address}").route(web::get().to(routes::get_token_data)))
+                    .service(routes::create_account)
+                    .service(routes::get_account)
+                    .service(routes::get_account_data)
+                    .service(routes::add_to_watchlist)
+                    .service(routes::remove_from_watchlist)
+                    .service(routes::update_account)
+                     .service(web::resource("/diamond_hands").route(web::get().to(routes::get_diamond_hands)))
+                     .service(routes::get_cult_tokens)
+                    //.service(web::resource("/top_coins").route(web::get().to(routes::get_top_coins)))
+                    .service(routes::get_cult_data)
+                    //.service(web::resource("/cult_token/{token_address}").route(web::get().to(routes::get_token_data)))
                     .service(web::resource("/top_holders/{token_address}/{offset}/{limit}").route(web::get().to(routes::get_top_holders)))
                     .service(web::resource("/trades/{token_address}/{offset}/{limit}").route(web::get().to(routes::get_token_trades)))
-                    .service(web::resource("/communities").route(web::get().to(routes::get_all_communities))),
+                    .service(routes::get_all_communities)
+                    // .service(
+                    //     web::resource("/account")
+                    //         .route(web::post().to(routes::create_account))
+                    // ),
             )
             .service(
-                web::scope("/admin")
+                web::scope("/admin").wrap(NormalizePath::trim())
                     .wrap(ApiGuard::new())
                     .service(
                         web::resource("/run-diamond-hands")
@@ -310,7 +315,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::resource("/ws").route(web::get().to(websocket_handler)))
     })
     .bind(server_address)?
-    .workers(4)
+    .workers(8)
     .run()
     .await
 }
