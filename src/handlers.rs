@@ -845,6 +845,78 @@ async fn update_token_balance(
     Ok(())
 }
 
+pub async fn handle_token_claimed(
+    event: TokensClaimedEvent,
+    tx: &mut sqlx::Transaction<'_, Postgres>
+) -> Result<(), anyhow::Error> {
+    println!("handle_token_claimed");
+    // Convert u128 values to string (already done), then parse as BigDecimal:
+    let token = event.token.to_string();
+    let recipient = event.recipient.to_string();
+    let amount = BigDecimal::from_str(&event.amount.to_string())?;
+
+    // update token_balance
+    sqlx::query!(
+        r#"
+        update token_balance
+        set holdings_value = holdings_value + $1,
+        first_bought = CURRENT_TIMESTAMP
+        where account_id = $2 and token_id = $3
+        "#,
+        amount,
+        recipient,
+        token
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    
+    // update token holder_count
+    sqlx::query!(
+        r#"
+        update cult_token
+        set holder_count = holder_count + 1
+        where id = $1
+        "#,
+        token
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn handle_cult_market_graduated(
+    event: CultMarketGraduatedEvent,
+    tx: &mut sqlx::Transaction<'_, Postgres>
+) -> Result<(), anyhow::Error> {
+    println!("handle_cult_market_graduated");
+    // Convert u128 values to string (already done), then parse as BigDecimal:
+    let tokenAddress = event.tokenAddress.to_string();
+    let poolAddress = event.poolAddress.to_string();
+    let totalEthLiquidity = BigDecimal::from_str(&event.totalEthLiquidity.to_string())?;
+    let totalTokenLiquidity = BigDecimal::from_str(&event.totalTokenLiquidity.to_string())?;
+    let lpPositionId = i64::from_str(&event.lpPositionId.to_string())?;
+    let marketType = u8::from_str(&event.marketType.to_string())?;
+
+    // update token_balance
+    sqlx::query!(
+        r#"
+        update cult_token
+        set lppositionId = $3,
+        is_graduated = $4
+        where id = $1 and pool_address = $2
+        "#,
+        tokenAddress,
+        poolAddress,
+        lpPositionId,
+        marketType == 1
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
 fn deserialize_u128_from_str<'de, D>(deserializer: D) -> Result<u128, D::Error>
     where D: Deserializer<'de>
 {
@@ -946,4 +1018,21 @@ pub struct CultTokenFeesEvent {
     pub order_referrer_fee: i64,
     pub block_timestamp: u64,
     pub transaction_hash: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct TokensClaimedEvent {
+    pub token: String,
+    pub recipient: String,
+    pub amount: BigDecimal
+}
+
+#[derive(serde::Deserialize)]
+pub struct CultMarketGraduatedEvent {
+    pub tokenAddress: String,
+    pub poolAddress: String,
+    pub totalEthLiquidity: BigDecimal,
+    pub totalTokenLiquidity: BigDecimal,
+    pub lpPositionId: i64,
+    pub marketType: u8
 }

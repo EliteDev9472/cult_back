@@ -20,6 +20,8 @@ pub struct WebhookConfig {
 pub enum WebhookEventType {
     CultTokenCreated,
     CultTokenBuy,
+    TokenClaimed,
+    CultMarketGraduated
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
