@@ -850,37 +850,62 @@ pub async fn handle_token_claimed(
     tx: &mut sqlx::Transaction<'_, Postgres>
 ) -> Result<(), anyhow::Error> {
     println!("handle_token_claimed");
-    // Convert u128 values to string (already done), then parse as BigDecimal:
+
     let token = event.token.to_string();
     let recipient = event.recipient.to_string();
     let amount = BigDecimal::from_str(&event.amount.to_string())?;
 
-    // update token_balance
-    sqlx::query!(
+    // Check if the recipient is already holding the token
+    let is_new_holder: Option<bool> = sqlx::query_scalar!(
         r#"
-        update token_balance
-        set holdings_value = holdings_value + $1,
-        first_bought = CURRENT_TIMESTAMP
-        where account_id = $2 and token_id = $3
+        SELECT NOT EXISTS (
+            SELECT 1 
+            FROM token_balance
+            WHERE account_id = $1 AND token_id = $2 AND holdings_value > 0
+        ) AS is_new_holder
         "#,
-        amount,
         recipient,
         token
     )
     .fetch_optional(&mut **tx)
-    .await?;
-    
-    // update token holder_count
+    .await?
+    .flatten(); // Flatten the Option<Option<bool>> to Option<bool>
+
+    let is_new_holder = is_new_holder.unwrap_or(false);
+
+    // Update the token_balance for the recipient
     sqlx::query!(
         r#"
-        update cult_token
-        set holder_count = holder_count + 1
-        where id = $1
+        UPDATE token_balance
+        SET 
+            holdings_value = holdings_value + $3,
+            first_bought = CASE 
+                WHEN $4 THEN CURRENT_TIMESTAMP
+                ELSE first_bought
+            END
+        WHERE account_id = $1 AND token_id = $2;
         "#,
-        token
+        recipient,  // account_id
+        token,      // token_id
+        amount,     // amount
+        is_new_holder // whether the recipient is a new holder
     )
-    .fetch_optional(&mut **tx)
+    .execute(&mut **tx)
     .await?;
+
+    // Update holder_count in cult_token if the recipient is a new holder
+    if is_new_holder {
+        sqlx::query!(
+            r#"
+            UPDATE cult_token
+            SET holder_count = holder_count + 1
+            WHERE id = $1;
+            "#,
+            token
+        )
+        .execute(&mut **tx)
+        .await?;
+    }
 
     Ok(())
 }
