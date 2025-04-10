@@ -284,8 +284,8 @@ async fn main() -> std::io::Result<()> {
                     //.service(web::resource("/top_coins").route(web::get().to(routes::get_top_coins)))
                     .service(routes::get_cult_data)
                     //.service(web::resource("/cult_token/{token_address}").route(web::get().to(routes::get_token_data)))
-                    .service(web::resource("/top_holders/{token_address}/{offset}/{limit}").route(web::get().to(routes::get_top_holders)))
-                    .service(web::resource("/trades/{token_address}/{offset}/{limit}").route(web::get().to(routes::get_token_trades)))
+                    .service(routes::get_top_holders)
+                    .service(routes::get_cult_trades)
                     .service(routes::get_all_communities)
                     // .service(
                     //     web::resource("/account")

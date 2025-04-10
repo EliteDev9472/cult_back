@@ -164,12 +164,6 @@ pub struct CommunityResponse {
     pub community_score: Option<f32>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct TopHolderParams {
-    pub token_address: String,
-    pub offset: i64,
-    pub limit: i64,
-}
 #[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct CultTokensResponse {
     pub token_address: String,
@@ -190,12 +184,19 @@ pub struct CultTokensResponse {
     pub bonding_curve_percentage: f64,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct CultTokenTopHolders {
-    pub value: BigDecimal,
-    pub id: String
+#[derive(Debug, Deserialize, Serialize,  utoipa::ToSchema)]
+pub struct CultTokenTopHolder {
+    pub value: f64,
+    pub id: String,
+    pub slug: Option<String>
 }
 
+#[derive(Debug, Deserialize, Serialize, utoipa::IntoParams)]
+pub struct TopHolderParams {
+    pub token_address: String,
+    pub offset: i64,
+    pub limit: i64,
+}
 
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -220,18 +221,19 @@ pub struct CultTokenDataResponse {
     pub pool_address: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, FromRow)]
+#[derive(Debug, Deserialize, Serialize, FromRow, ToSchema)]
 pub struct TokenTradesResponse {
     pub id: String,
-    pub trader: Option<String>,
-    pub recipient: Option<String>,
-    pub orderReferrer: Option<String>,
-    pub ethAmount: Option<BigDecimal>,
-    pub tokenAmount: Option<BigDecimal>,
-    pub traderTokenBalance: Option<BigDecimal>,
-    pub marketType: i64,
+    pub trader: String,
+    pub recipient: String,
+    pub order_referer: String,
+    pub eth_amount: String,
+    pub token_amount: String,
+    pub trader_token_balance: String,
+    pub market_type: i64,
+    #[schema(value_type = String, example = "2023-01-01T00:00:00Z")]
     pub timestamp: DateTime<Utc>,
-    pub transactionHash: String,
+    pub transaction_hash: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

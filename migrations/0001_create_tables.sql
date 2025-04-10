@@ -151,11 +151,11 @@ CREATE TYPE trade_type AS ENUM ('Buy', 'Sell');
 
 -- TokenTrade Table
 CREATE TABLE token_trade (
-    token_id TEXT REFERENCES cult_token(id) ON DELETE CASCADE, -- Changed to TEXT
+    token_id TEXT REFERENCES cult_token(id) ON DELETE CASCADE NOT NULL, 
     trade_type trade_type NOT NULL,
-    trader_id TEXT REFERENCES account(id) ON DELETE CASCADE, -- Changed to TEXT
-    recipient_id TEXT REFERENCES account(id) ON DELETE CASCADE, -- Changed to TEXT
-    order_referrer_id TEXT REFERENCES account(id) ON DELETE CASCADE, -- Changed to TEXT
+    trader_id TEXT REFERENCES account(id) ON DELETE CASCADE NOT NULL, 
+    recipient_id TEXT REFERENCES account(id) ON DELETE CASCADE NOT NULL, 
+    order_referrer_id TEXT REFERENCES account(id) ON DELETE CASCADE NOT NULL, 
     total_eth NUMERIC NOT NULL,
     eth_fee NUMERIC NOT NULL,
     eth_amount NUMERIC NOT NULL,

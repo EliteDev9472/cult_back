@@ -2,7 +2,7 @@ use alloy::primitives::U256;
 use actix_web::{get, post, delete, put, web, HttpResponse, Responder};
 use sqlx::{PgPool, Postgres, Transaction};
 use serde::{Deserialize, Serialize};
-use crate::models::{ CultTokenDataResponse, CommunityResponse, UpdateAccountRequest, WatchlistActionRequest, CreateAccountRequest, Account, PaginationParams, TopHolderParams, CultTokensResponse, CultTokenTopHolders, TokenTradesResponse, AccountDetailResponse,AccountData, CreatedToken, OwnedToken, WatchlistToken, Community, CreateAccountResponse};
+use crate::models::{ TopHolderParams, CultTokenTopHolder, CultTokenDataResponse, CommunityResponse, UpdateAccountRequest, WatchlistActionRequest, CreateAccountRequest, Account, PaginationParams, CultTokensResponse, TokenTradesResponse, AccountDetailResponse,AccountData, CreatedToken, OwnedToken, WatchlistToken, Community, CreateAccountResponse};
 use std::result::Result::Ok;
 use bigdecimal::BigDecimal;
 use std::str::FromStr;
@@ -713,47 +713,87 @@ pub async fn get_cult_data(
         Err(e) => HttpResponse::InternalServerError().body(format!("Database error: {}", e)),
     }
 }
-pub async fn get_top_holders(pool: web::Data<PgPool>, path: web::Path<TopHolderParams>) -> impl Responder {
 
+#[utoipa::path(
+    tag = "Discover Tokens",
+    get,
+    path = "/cult/{token_address}/top-holders/{offset}/{limit}",
+    params(
+        ("token_address" = String, Path, description = "Token address (id)"),
+        ("offset" = i64, Path, description = "Pagination offset"),
+        ("limit" = i64, Path, description = "Pagination limit")
+    ),
+    responses(
+        (status = 200, description = "Top token holders sorted by holdings", body = [CultTokenTopHolder]),
+        (status = 500, description = "Database error")
+    )
+)]
+#[get("/cult/{token_address}/top-holders/{offset}/{limit}")]
+pub async fn get_top_holders(
+    pool: web::Data<PgPool>,
+    path: web::Path<TopHolderParams>,
+) -> impl Responder {
     let TopHolderParams { token_address, offset, limit } = path.into_inner();
 
     let result = sqlx::query!(
         r#"
         SELECT 
-            account_id,
-            value_z
-        FROM token_balance WHERE token_id = $1
-        ORDER BY value_z DESC offset $2 limit $3
+            tb.account_id,
+            tb.value_z,
+            a.slug
+        FROM token_balance tb
+        LEFT JOIN account a ON tb.account_id = a.id
+        WHERE tb.token_id = $1
+        ORDER BY tb.value_z DESC 
+        OFFSET $2 
+        LIMIT $3
         "#,
         token_address,
         offset,
         limit
     )
-    .fetch_optional(pool.get_ref())
+    .fetch_all(pool.get_ref())
     .await;
-
 
     match result {
         Ok(rows) => {
-            let holders: Vec<CultTokenTopHolders> = rows
+            let holders: Vec<CultTokenTopHolder> = rows
                 .into_iter()
-                .map(|row| CultTokenTopHolders {
-                    id: row.account_id,
-                    value: row.value_z.unwrap_or_else(|| BigDecimal::from_str("0").unwrap()),
+                .map(|row| {
+                    let raw_wei = row.value_z.map(|v| v.to_f64().unwrap_or(0.0)).unwrap_or(0.0);
+                    let percentage = (raw_wei / 1e28) * 100.0;
+
+                    CultTokenTopHolder {
+                        id: row.account_id,
+                        slug: row.slug,
+                        value: percentage,
+                    }
                 })
                 .collect();
 
             HttpResponse::Ok().json(holders)
         }
-        Ok(None) => HttpResponse::NotFound().body("Account not found"),
         Err(e) => HttpResponse::InternalServerError().body(format!("Database error: {}", e)),
     }
 }
 
-
-
-pub async fn get_token_trades(
-    pool: web::Data<sqlx::PgPool>,
+#[utoipa::path(
+    tag = "Tokens",
+    get,
+    path = "/cult/{token_address}/trades/{offset}/{limit}",
+    params(
+        ("token_address" = String, Path, description = "Token address to query trades for"),
+        ("offset" = i64, Path, description = "Pagination offset"),
+        ("limit" = i64, Path, description = "Pagination limit")
+    ),
+    responses(
+        (status = 200, description = "List of token trades", body = [TokenTradesResponse]),
+        (status = 500, description = "Database error")
+    )
+)]
+#[get("/cult/{token_address}/trades/{offset}/{limit}")]
+pub async fn get_cult_trades(
+    pool: web::Data<PgPool>,
     path: web::Path<TopHolderParams>,
 ) -> impl Responder {
     let TopHolderParams { token_address, offset, limit } = path.into_inner();
@@ -762,16 +802,16 @@ pub async fn get_token_trades(
         TokenTradesResponse,
         r#"
         SELECT 
-            token_id as id,
-            trader_id as trader,
-            recipient_id as recipient,
-            order_referrer_id as "orderReferrer",
-            eth_amount as "ethAmount?",
-            token_amount as "tokenAmount?",
-            trader_token_balance as "traderTokenBalance?",
-            market_type as "marketType",
-            timestamp,
-            transaction_hash as "transactionHash"
+        token_id as "id!",
+        trader_id as "trader!",
+        recipient_id as "recipient!",
+        order_referrer_id as "order_referer!",
+        eth_amount::TEXT as "eth_amount!",
+        token_amount::TEXT as "token_amount!",
+        trader_token_balance::TEXT as "trader_token_balance!",
+        market_type,
+        timestamp,
+        transaction_hash
         FROM token_trade 
         WHERE token_id = $1
         ORDER BY timestamp DESC 
@@ -788,12 +828,10 @@ pub async fn get_token_trades(
         Ok(rows) => HttpResponse::Ok().json(rows),
         Err(e) => {
             eprintln!("Error fetching trades: {:?}", e);
-            HttpResponse::InternalServerError().body("DB error")
+            HttpResponse::InternalServerError().body("Database error")
         }
     }
 }
-
-
 //
 // ----- OpenAPI Aggregation -----
 //
@@ -811,7 +849,8 @@ pub async fn get_token_trades(
         
         get_cult_tokens,
         get_cult_data,
-
+        get_top_holders,
+        get_cult_trades
     ),
     components(
         schemas(
@@ -824,6 +863,8 @@ pub async fn get_token_trades(
             CommunityResponse,
             CultTokensResponse,
             CultTokenDataResponse,
+            CultTokenTopHolder,
+            TokenTradesResponse
         )
     ),
     tags(
