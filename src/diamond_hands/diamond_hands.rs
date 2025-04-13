@@ -180,7 +180,7 @@ pub async fn update_diamond_hands(
                 merkle_proofs = $8,
                 holder_count = $9
             "#,
-            DIAMOND_HAND_ID,
+            &DIAMOND_HAND_ID,
             DIAMOND_HAND_NAME,
             DIAMOND_HAND_IMG,
             DIAMOND_HAND_ADDRESS,
@@ -189,6 +189,21 @@ pub async fn update_diamond_hands(
             timestamp,
             proofs,
             SAMPLE_SIZE as i32
+        )
+        .execute(&mut **tx)
+        .await?;
+
+        //insert into account communities
+        sqlx::query!(
+            r#"
+            INSERT INTO account_communities (account_id, community_id)
+            SELECT a.id, $1
+            FROM UNNEST($2::text[]) AS m(id)
+            JOIN account a ON a.id = m.id
+            ON CONFLICT (account_id, community_id) DO NOTHING
+            "#,
+            DIAMOND_HAND_ID,
+            &account_ids
         )
         .execute(&mut **tx)
         .await?;

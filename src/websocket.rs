@@ -34,6 +34,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Text(text)) => ctx.text(text),
             Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
+            Ok(ws::Message::Close(reason)) => {
+                log::info!("WebSocket connection closed: {:?}", reason);
+                ctx.close(reason);
+            },
             _ => (),
         }
     }
@@ -54,6 +58,11 @@ impl Actor for WebSocketSession {
                 }
             }
         });
+    }
+
+    fn stopping(&mut self, _: &mut Self::Context) -> actix::Running {
+        log::info!("WebSocket connection closing: {}", self.id);
+        actix::Running::Stop
     }
 }
 

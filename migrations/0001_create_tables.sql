@@ -58,7 +58,7 @@ CREATE TABLE account (
     referral_code TEXT,
     diamond_hand_probability INT NOT NULL CHECK (diamond_hand_probability >= 0), -- Ensure non-negative
     referrer_id TEXT REFERENCES account(id) ON DELETE SET NULL, -- Foreign key reference
-    total_referrals INT CHECK (total_referrals >= 0), -- Ensure non-negative
+    total_referrals INT DEFAULT 0, -- Ensure non-negative
     fee_collected NUMERIC NOT NULL, -- Store large U256 values safely
     twitter TEXT,
     discord TEXT,
@@ -69,7 +69,7 @@ CREATE TABLE account (
 -- 2. Create the corrected token_airdrops table
 CREATE TABLE token_airdrops (
     id SERIAL PRIMARY KEY,
-    transaction_hash TEXT NOT NULL,  -- Same for all roots in one event
+    transaction_hash TEXT NOT NULL, 
     token_id TEXT NOT NULL REFERENCES cult_token(id),
     merkle_root BYTEA NOT NULL,      -- Match communities.merkle_root type
     community_id TEXT NOT NULL REFERENCES communities(id),

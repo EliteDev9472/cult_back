@@ -972,7 +972,7 @@ pub struct CultTokenCreatedEvent {
     pub total_airdrop_recipient_count: u32,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, Clone, serde::Serialize)]
 pub struct CultTokenBuyEvent {
     pub trader_id: String,
     pub recipient_id: String,

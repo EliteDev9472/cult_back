@@ -2,7 +2,7 @@ use alloy::primitives::U256;
 use actix_web::{get, post, delete, put, web, HttpResponse, Responder};
 use sqlx::{PgPool, Postgres, Transaction};
 use serde::{Deserialize, Serialize};
-use crate::models::{ TopHolderParams, CultTokenTopHolder, CultTokenDataResponse, CommunityResponse, UpdateAccountRequest, WatchlistActionRequest, CreateAccountRequest, Account, PaginationParams, CultTokensResponse, TokenTradesResponse, AccountDetailResponse,AccountData, CreatedToken, OwnedToken, WatchlistToken, Community, CreateAccountResponse};
+use crate::models::{ MerkleProofResponse, TopHolderParams, CultTokenTopHolder, CultTokenDataResponse, CommunityResponse, UpdateAccountRequest, WatchlistActionRequest, CreateAccountRequest, Account, PaginationParams, CultTokensResponse, TokenTradesResponse, AccountDetailResponse,AccountData, CreatedToken, OwnedToken, WatchlistToken, Community, CreateAccountResponse};
 use std::result::Result::Ok;
 use bigdecimal::BigDecimal;
 use std::str::FromStr;
@@ -27,18 +27,26 @@ fn generate_referral_code() -> String {
     code
 }
 
+
 async fn validate_referral_code(
     tx: &mut Transaction<'_, Postgres>,
     referral_code: &str
 ) -> Result<String, anyhow::Error> {
+    // Get referrer info
     let record = sqlx::query!(
-        "SELECT id FROM account WHERE referral_code = $1",
+        "SELECT id, total_referrals FROM account WHERE referral_code = $1",
         referral_code
     )
     .fetch_optional(&mut **tx)  
     .await?;
     
-    record.map(|r| r.id).ok_or_else(|| anyhow::anyhow!("Invalid referral code"))
+    match record {
+        Some(r) if r.total_referrals >= Some(5) => {
+            Err(anyhow::anyhow!("Referral code has reached maximum usage (5)"))
+        },
+        Some(r) => Ok(r.id),
+        None => Err(anyhow::anyhow!("Invalid referral code"))
+    }
 }
 
 /////////////////////
@@ -91,11 +99,18 @@ pub async fn create_account(
     let referrer_id = match &request.referral_code {
         Some(code) => match validate_referral_code(&mut tx, code).await {
             Ok(id) => Some(id),
-            Err(e) => return HttpResponse::BadRequest().json(format!("Invalid referral code: {e}")),
+            Err(e) => {
+                // Check if it's specifically a max usage error for better user feedback
+                if e.to_string().contains("maximum usage") {
+                    return HttpResponse::BadRequest().json("Referral code has reached maximum usage limit of 5");
+                } else {
+                    return HttpResponse::BadRequest().json(format!("Invalid referral code: {e}"));
+                }
+            },
         },
         None => None,
     };
-
+    
     // Generate unique referral code with collision check
     let mut new_referral_code;
     loop {
@@ -526,6 +541,129 @@ pub async fn get_all_communities(pool: web::Data<PgPool>) -> impl Responder {
 }
 
 
+
+/// Get Merkle proof for an account and token
+#[utoipa::path(
+    tag = "Account",
+    get,
+    path = "/airdrop/proof/{account_id}/{token_id}",
+    params(
+        ("account_id" = String, Path, description = "Account ID to get the merkle proof for"),
+        ("token_id" = String, Path, description = "Token ID to get the merkle proof for")
+    ),
+    responses(
+        (status = 200, description = "Merkle proof retrieved successfully", body = MerkleProofResponse),
+        (status = 404, description = "No airdrop found for this account and token"),
+        (status = 500, description = "Internal server or database error")
+    )
+)]
+#[get("/airdrop/proof/{account_id}/{token_id}")]
+pub async fn get_merkle_proof(
+    pool: web::Data<PgPool>,
+    path: web::Path<(String, String)>,
+) -> impl Responder {
+    let (account_id, token_id) = path.into_inner();
+    
+    // Get the airdrop details for this account and token
+    let result = sqlx::query!(
+        r#"
+        SELECT 
+            ta.token_id,
+            ta.merkle_root,
+            ta.merkle_proofs,
+            ta.community_id,
+            ta.community_name,
+            ta.total_amount,
+            ta.transaction_hash
+        FROM token_airdrops ta
+        JOIN airdrop_recipients ar ON ta.id = ar.token_airdrop_id
+        WHERE ar.account_id = $1 AND ta.token_id = $2
+        LIMIT 1
+        "#,
+        account_id,
+        token_id
+    )
+    .fetch_optional(pool.get_ref())
+    .await;
+    
+    match result {
+        Ok(Some(row)) => {
+            // Parse the JSONB
+            let proofs: serde_json::Value = row.merkle_proofs;
+            
+            // Extract the proof for this account
+            let account_proof = proofs.get(&account_id);
+            
+            if let Some(proof) = account_proof {
+                let response = MerkleProofResponse {
+                    token_id: row.token_id,
+                    account_id: account_id,
+                    merkle_root: hex::encode(row.merkle_root),
+                    merkle_proof: proof.clone(),
+                    community_id: row.community_id,
+                    community_name: row.community_name,
+                    total_amount: row.total_amount.to_string(),
+                    transaction_hash: row.transaction_hash,
+                };
+                
+                HttpResponse::Ok().json(response)
+            } else {
+                HttpResponse::NotFound().json("No merkle proof found for this account")
+            }
+        },
+        Ok(None) => HttpResponse::NotFound().json("No airdrop found for this account and token"),
+        Err(e) => {
+            eprintln!("Error fetching merkle proof: {:?}", e);
+            HttpResponse::InternalServerError().body("Database error")
+        }
+    }
+}
+
+/// Get communities a user is part of
+#[utoipa::path(
+    tag = "Communities",
+    get,
+    path = "/account/{account_id}/communities",
+    params(
+        ("account_id" = String, Path, description = "Account ID to fetch communities for")
+    ),
+    responses(
+        (status = 200, description = "List of communities the user is part of", body = [Community]),
+        (status = 500, description = "Internal server or database error")
+    )
+)]
+#[get("/account/{account_id}/communities")]
+pub async fn get_account_communities(
+    pool: web::Data<PgPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    let account_id = path.into_inner();
+    
+    // Direct query to get only the needed fields
+    let result = sqlx::query_as!(
+        Community,
+        r#"
+        SELECT 
+            c.id,
+            c.name,
+            c.img_url
+        FROM communities c
+        JOIN account_communities ac ON c.id = ac.community_id
+        WHERE ac.account_id = $1
+        "#,
+        account_id
+    )
+    .fetch_all(pool.get_ref())
+    .await;
+    
+    match result {
+        Ok(communities) => HttpResponse::Ok().json(communities),
+        Err(e) => {
+            eprintln!("Error fetching communities: {:?}", e);
+            HttpResponse::InternalServerError().body("Database error")
+        }
+    }
+}
 /////////////////////
 /// TOKEN STUFF ////
 /// //////////////////
@@ -850,7 +988,9 @@ pub async fn get_cult_trades(
         get_cult_tokens,
         get_cult_data,
         get_top_holders,
-        get_cult_trades
+        get_cult_trades,
+        get_merkle_proof,
+        get_account_communities
     ),
     components(
         schemas(
@@ -864,12 +1004,13 @@ pub async fn get_cult_trades(
             CultTokensResponse,
             CultTokenDataResponse,
             CultTokenTopHolder,
-            TokenTradesResponse
+            TokenTradesResponse,
+            MerkleProofResponse,
+            Community
         )
     ),
     tags(
         (name = "Account", description = "Payload for creating, getting account, including optional referral and social handles"),
-        (name = "Account", description = "Returns detailed account data"),
         (name = "Watchlist", description = "add or remove tokens from or to account's watchlist"),
         (name = "Tokens", description = "Returns token data for home page discover cards"),
         (name = "Communities", description = "View all supported communities")

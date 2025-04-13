@@ -288,3 +288,25 @@ pub struct Community {
    pub name: String,
    pub img_url: String,
 }
+
+// Request and response structs for merkle proof
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct MerkleProofResponse {
+    pub token_id: String,
+    pub account_id: String,
+    pub merkle_root: String, // Hex-encoded
+    pub merkle_proof: serde_json::Value, // Keeping as JSON Value for flexibility
+    pub community_id: String,
+    pub community_name: String,
+    pub total_amount: String, // Using String for large numeric values
+    pub transaction_hash: String,
+}
+
+// #[derive(Debug, Deserialize, Serialize, FromRow, ToSchema)]
+// pub struct AccountCommunitiesResponse {
+//     pub id: String,
+//     pub name: String,
+//     pub description: Option<String>,
+//     pub address: String,
+//     pub member_count: i64,
+// }

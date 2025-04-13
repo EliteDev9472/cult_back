@@ -25,6 +25,7 @@ mod routes;
 mod websocket;
 use auth::middleware::ApiGuard;
 use community_airdrops::community_airdrops::update_all_communities;
+use community_airdrops::compute_all_community_scores::update_all_community_scores;
 use diamond_hands::diamond_hands::{
     get_eligible_accounts, select_weighted_sample, update_diamond_hands, SAMPLE_SIZE,
 };
@@ -94,6 +95,7 @@ use websocket::websocket_handler;
 struct EventProcessor {
     sender: mpsc::Sender<models::WebhookPayload>,
     pool: Pool<Postgres>,
+    event_sender: broadcast::Sender<models::WebhookPayload>,
 }
 
 impl EventProcessor {
@@ -101,6 +103,7 @@ impl EventProcessor {
         mut receiver: mpsc::Receiver<models::WebhookPayload>,
         pool: Pool<Postgres>,
         max_concurrent: usize,
+        event_sender: broadcast::Sender<models::WebhookPayload>,
     ) {
         
         // Semaphore to limit concurrent processing
@@ -109,7 +112,7 @@ impl EventProcessor {
         while let Some(payload) = receiver.recv().await {
             let pool_clone = pool.clone();
             let semaphore_clone = semaphore.clone();
-            
+            let event_sender_clone = event_sender.clone(); // Clone for the task
 
             // Spawn a task with limited concurrency
             task::spawn(async move {
@@ -143,11 +146,23 @@ impl EventProcessor {
                     models::WebhookEventType::CultTokenBuy => {
                         println!("Processing CultTokenBuy event");
                         match serde_json::from_value::<handlers::CultTokenBuyEvent>(
-                            payload.data,
+                            payload.data.clone(),
                         ) {
                             Ok(event) => {
                                 // Pass mutable borrow of tx, handler returns Result
-                                handlers::handle_cult_token_buy(event, &mut tx).await
+                                let result = handlers::handle_cult_token_buy(event.clone(), &mut tx).await;
+                                
+                                // If successful, broadcast the event via WebSocket
+                                if result.is_ok() {
+                                    // Send the original payload to WebSocket clients
+                                    if let Err(e) = event_sender_clone.send(payload.clone()) {
+                                        log::error!("Failed to broadcast event: {}", e);
+                                    } else {
+                                        log::info!("Successfully broadcasted CultTokenBuy event");
+                                    }
+                                }
+                                
+                                result
                             }
                             Err(e) => {
                                 println!("Failed to deserialize CultTokenBuyEvent: {}", e);
@@ -218,9 +233,7 @@ impl EventProcessor {
 async fn webhook_handler(
     payload: web::Json<models::WebhookPayload>,
     event_processor: web::Data<mpsc::Sender<models::WebhookPayload>>,
-    event_sender: web::Data<broadcast::Sender<models::WebhookPayload>>,
 ) -> impl Responder {
-    println!("RECEIVED WEBHOOK EVENT");
     // Generate unique event ID if not provided
     let event_id = payload.id.clone();
     let payload = payload.into_inner();
@@ -270,6 +283,9 @@ async fn main() -> std::io::Result<()> {
         job_queue_buffer: 10_000,
     };
 
+    // Create broadcast channel for WebSocket events
+    let (event_sender, _) = broadcast::channel::<models::WebhookPayload>(1000);
+
     // Create event processing channel
     let (sender, receiver) = mpsc::channel(webhook_config.job_queue_buffer);
 
@@ -278,10 +294,8 @@ async fn main() -> std::io::Result<()> {
         receiver,
         pool.clone(),
         webhook_config.max_concurrent_jobs,
+        event_sender.clone(),
     ));
-
-    // Create broadcast channel for WebSocket events
-    let (event_sender, _) = broadcast::channel::<models::WebhookPayload>(100);
 
     // Clone the sender for the webhook handler
     let webhook_event_sender = event_sender.clone();
@@ -319,10 +333,7 @@ async fn main() -> std::io::Result<()> {
                     .service(routes::get_top_holders)
                     .service(routes::get_cult_trades)
                     .service(routes::get_all_communities)
-                    // .service(
-                    //     web::resource("/account")
-                    //         .route(web::post().to(routes::create_account))
-                    // ),
+                    .service(routes::get_account_communities)
             )
             .service(
                 web::scope("/admin").wrap(NormalizePath::trim())
@@ -334,7 +345,11 @@ async fn main() -> std::io::Result<()> {
                     .service(
                         web::resource("/run-community-airdrops")
                             .route(web::post().to(community_airdrops_handler)),
+                    ).service(
+                        web::resource("/run-community-scores")
+                            .route(web::post().to(update_all_community_scores)),
                     ),
+
             )
             .service(
                 web::resource("/webhook").route(
