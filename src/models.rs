@@ -310,3 +310,18 @@ pub struct MerkleProofResponse {
 //     pub address: String,
 //     pub member_count: i64,
 // }
+
+#[derive(Debug, Deserialize)]
+pub struct CoinGeckoPriceResponse {
+    #[serde(flatten)]
+    pub prices: std::collections::HashMap<String, std::collections::HashMap<String, f64>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CryptoPrice {
+    pub symbol: String,
+    pub price: BigDecimal,
+    pub change_24h: BigDecimal,
+    pub change_1h: BigDecimal,
+    pub last_updated_at: DateTime<Utc>,
+}

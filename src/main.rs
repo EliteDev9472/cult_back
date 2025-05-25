@@ -334,6 +334,7 @@ async fn main() -> std::io::Result<()> {
                     .service(routes::get_cult_trades)
                     .service(routes::get_all_communities)
                     .service(routes::get_account_communities)
+                    .service(routes::get_crypto_prices)
             )
             .service(
                 web::scope("/admin").wrap(NormalizePath::trim())

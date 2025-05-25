@@ -8,6 +8,9 @@ use sqlx::types::BigDecimal;
 use std::str::FromStr;                  // for parsing string -> BigDecimal
 use serde::Deserialize;
 use serde::de::{self, Deserializer};
+use sqlx::PgPool;
+use tokio::time::{sleep, Duration};
+use std::collections::HashMap;
 
 // Introduce 'tx for the Transaction's own lifetime, 'a for the borrow lifetime
 pub async fn create_account<'tx, 'a>(
@@ -942,6 +945,54 @@ pub async fn handle_cult_market_graduated(
     Ok(())
 }
 
+pub async fn start_price_fetcher(pool: PgPool) {
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = fetch_and_store_prices(&pool).await {
+                eprintln!("Price fetch error: {:?}", e);
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+    });
+}
+
+async fn fetch_and_store_prices(pool: &PgPool) -> Result<(), anyhow::Error> {
+    let url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true&include_1hr_change=true";
+    let client = reqwest::Client::new();
+    let response = client.get(url).send().await?;
+    let data: HashMap<String, PriceEntry> = response.json().await?;
+
+    println!("--------fetch_and_store_prices-----------");
+    for (symbol, entry) in data {
+        let symbol_upper = match symbol.as_str() {
+            "bitcoin" => "BTC",
+            "ethereum" => "ETH",
+            _ => &symbol.to_uppercase()
+        };
+
+        sqlx::query!(
+            r#"
+            INSERT INTO crypto_latest_prices (symbol, price, change_24h, change_1h, last_updated_at)
+            VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+            ON CONFLICT (symbol)
+            DO UPDATE SET
+                price = EXCLUDED.price,
+                change_24h = EXCLUDED.change_24h,
+                change_1h = EXCLUDED.change_1h,
+                last_updated_at = EXCLUDED.last_updated_at
+            "#,
+            symbol_upper,
+            entry.usd,
+            entry.usd_24h_change,
+            entry.usd_1h_change
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
 fn deserialize_u128_from_str<'de, D>(deserializer: D) -> Result<u128, D::Error>
     where D: Deserializer<'de>
 {
@@ -1060,4 +1111,11 @@ pub struct CultMarketGraduatedEvent {
     pub totalTokenLiquidity: BigDecimal,
     pub lpPositionId: i64,
     pub marketType: u8
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PriceEntry {
+    usd: BigDecimal,
+    usd_24h_change: BigDecimal,
+    usd_1h_change: BigDecimal,
 }

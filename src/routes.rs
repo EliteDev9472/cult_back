@@ -2,7 +2,7 @@ use alloy::primitives::U256;
 use actix_web::{get, post, delete, put, web, HttpResponse, Responder};
 use sqlx::{PgPool, Postgres, Transaction};
 use serde::{Deserialize, Serialize};
-use crate::models::{ MerkleProofResponse, TopHolderParams, CultTokenTopHolder, CultTokenDataResponse, CommunityResponse, UpdateAccountRequest, WatchlistActionRequest, CreateAccountRequest, Account, PaginationParams, CultTokensResponse, TokenTradesResponse, AccountDetailResponse,AccountData, CreatedToken, OwnedToken, WatchlistToken, Community, CreateAccountResponse};
+use crate::models::{ MerkleProofResponse, TopHolderParams, CultTokenTopHolder, CultTokenDataResponse, CommunityResponse, UpdateAccountRequest, WatchlistActionRequest, CreateAccountRequest, Account, PaginationParams, CultTokensResponse, TokenTradesResponse, AccountDetailResponse,AccountData, CreatedToken, OwnedToken, WatchlistToken, Community, CreateAccountResponse, CryptoPrice};
 use std::result::Result::Ok;
 use bigdecimal::BigDecimal;
 use std::str::FromStr;
@@ -974,6 +974,25 @@ pub async fn get_cult_trades(
 // ----- OpenAPI Aggregation -----
 //
 
+#[get("/crypto/prices")]
+pub async fn get_crypto_prices(pool: web::Data<PgPool>) -> impl Responder {
+    let result = sqlx::query_as!(
+        CryptoPrice,
+        r#"
+        SELECT symbol, price, change_24h, change_1h, last_updated_at
+        FROM crypto_latest_prices
+        ORDER BY symbol
+        "#
+    )
+    .fetch_all(pool.get_ref())
+    .await;
+
+    match result {
+        Ok(data) => HttpResponse::Ok().json(data),
+        Err(e) => HttpResponse::InternalServerError().body(format!("Database error: {}", e)),
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -984,7 +1003,7 @@ pub async fn get_cult_trades(
         remove_from_watchlist,
         update_account, 
         get_all_communities,
-        
+
         get_cult_tokens,
         get_cult_data,
         get_top_holders,
